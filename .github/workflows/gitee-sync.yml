@@ -148,15 +148,19 @@ jobs:
           
           cd github_repo
           
-          # 处理空仓库的情况（模拟手动创建）
+          # 获取远程默认分支（自动检测 main 或 master，不硬编码）
+          DEFAULT_BRANCH=$(git remote show origin | grep "HEAD branch" | sed 's/.*: //' || echo "main")
+          echo "📌 远程默认分支: ${DEFAULT_BRANCH}"
+          
+          # 处理空仓库的情况（使用检测到的默认分支）
           if ! git branch -a | grep -q .; then
-            echo "🆕 检测到空仓库，正在初始化（模拟手动创建）..."
-            git checkout --orphan main
+            echo "🆕 检测到空仓库，正在初始化..."
+            git checkout --orphan "${DEFAULT_BRANCH}"
             echo "# ${GITHUB_REPO}" >> README.md
             git add README.md
             git commit -m "first commit"
-            git push -u origin main
-            echo "✅ 空仓库已初始化，默认分支: main"
+            git push -u origin "${DEFAULT_BRANCH}"
+            echo "✅ 空仓库已初始化，默认分支: ${DEFAULT_BRANCH}"
           fi
           
           # 切换到目标分支（使用变量，不硬编码）
@@ -166,8 +170,8 @@ jobs:
             echo "分支 '${GITHUB_BRANCH}' 在远程存在，正在切换..."
             git checkout "${GITHUB_BRANCH}"
           else
-            echo "分支 '${GITHUB_BRANCH}' 不存在，基于 main 创建..."
-            git checkout main
+            echo "分支 '${GITHUB_BRANCH}' 不存在，基于 ${DEFAULT_BRANCH} 创建..."
+            git checkout "${DEFAULT_BRANCH}"
             git checkout -b "${GITHUB_BRANCH}"
             git push -u origin "${GITHUB_BRANCH}"
           fi
