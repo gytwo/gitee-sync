@@ -1,14 +1,14 @@
 # 仓库同步配置列表
 repositories:
-  - name: "pinyin_enhancement.koplugin-sync"  # 示例：同步一个主分支的项目
+  - name: "kopatches-sync"  # 示例：同步一个主分支的项目
     gitee:
       # Gitee 仓库完整地址
-      repo_url: "https://gitee.com/gytwo/pinyin_enhancement.koplugin.git"
+      repo_url: "https://gitee.com/gytwo/kopatches.git"
       # 要同步的源分支
       branch: "sync"
     github:
       # GitHub 目标仓库名称
-      repo_name: "pinyin_enhancement.koplugin"
+      repo_name: "kopatches"
       # GitHub 目标分支名称（可选，默认与 Gitee 分支相同）
       branch: "sync"
       # 是否为私有仓库
