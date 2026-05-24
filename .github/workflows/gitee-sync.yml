@@ -89,6 +89,10 @@ jobs:
               https://api.github.com/user/repos \
               -d "{\"name\":\"$GITHUB_REPO\", \"private\":$GITHUB_PRIVATE}"
             echo "✨ 仓库创建成功！"
+            
+            # 等待 GitHub 完成仓库初始化
+            echo "⏳ 等待仓库初始化（5秒）..."
+            sleep 5
           else
             echo "✅ 仓库已存在，检查并更新可见性设置..."
             # 更新已存在仓库的可见性
