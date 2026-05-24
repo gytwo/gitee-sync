@@ -1,3 +1,5 @@
+[![Sync from Gitee to GitHub](https://github.com/gytwo/gitee-sync/actions/workflows/gitee-sync.yml/badge.svg)](https://github.com/gytwo/gitee-sync/actions/workflows/gitee-sync.yml)
+
 # Gitee to GitHub 同步工具
 
 这是一个用于自动同步 Gitee 仓库到 GitHub 的工具，基于 GitHub Actions 实现。支持多仓库同步、分支指定、仓库可见性控制等功能。
