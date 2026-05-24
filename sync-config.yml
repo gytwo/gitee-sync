@@ -8,7 +8,7 @@ repositories:
       branch: "sync"
     github:
       # GitHub 目标仓库名称
-      repo_name: "https://github.com/gytwo/pinyin_enhancement.koplugin.git"
+      repo_name: "inyin_enhancement.koplugin"
       # GitHub 目标分支名称（可选，默认与 Gitee 分支相同）
       branch: "sync"
       # 是否为私有仓库
@@ -19,7 +19,7 @@ repositories:
       repo_url: "https://gitee.com/gytwo/ankimodel.git"
       branch: "sync"
     github:
-      repo_name: "https://github.com/gytwo/ankimodel.git"
+      repo_name: "ankimodel"
       branch: "sync"
       private: true
 
