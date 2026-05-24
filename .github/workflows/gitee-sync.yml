@@ -3,8 +3,11 @@ env:
   TZ: 'Asia/Shanghai'
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # 支持手动触发
   schedule:
+    # 每月2000分钟免费额度，可以根据执行时长调整频率。
+    # 在东八区的 14:00, 22:00, 23:00, 24:00 运行
+    # 对应 UTC 的 06:00, 14:00, 15:00, 16:00
     - cron: '0 6,14,15,16 * * *'
 
 jobs:
@@ -128,34 +131,26 @@ jobs:
           fi
           
           # ============================================================
-          # 核心修复：强制确保在正确的分支 (sync) 上操作
+          # 切换到目标分支（使用变量，不硬编码）
           # ============================================================
           echo "🔍 确保在分支 '${GITHUB_BRANCH}' 上操作..."
           
-          if git ls-remote --heads origin "$GITHUB_BRANCH" | grep -q "$GITHUB_BRANCH"; then
-            echo "分支 '${GITHUB_BRANCH}' 在远程存在，正在拉取并切换..."
-            git fetch origin "$GITHUB_BRANCH"
-            git checkout "$GITHUB_BRANCH" || git checkout -b "$GITHUB_BRANCH" "origin/$GITHUB_BRANCH"
+          if git ls-remote --heads origin "${GITHUB_BRANCH}" | grep -q "${GITHUB_BRANCH}"; then
+            echo "分支 '${GITHUB_BRANCH}' 在远程存在，正在切换..."
+            git checkout "${GITHUB_BRANCH}"
           else
-            echo "分支 '${GITHUB_BRANCH}' 在远程不存在，将基于 'main' 创建..."
+            echo "分支 '${GITHUB_BRANCH}' 不存在，基于 main 创建..."
             git checkout main
-            git checkout -b "$GITHUB_BRANCH"
-            git push -u origin "$GITHUB_BRANCH"
+            git checkout -b "${GITHUB_BRANCH}"
+            git push -u origin "${GITHUB_BRANCH}"
           fi
           
-          # 二次确认，强制切换
-          CURRENT_BRANCH=$(git branch --show-current)
-          if [ "$CURRENT_BRANCH" != "$GITHUB_BRANCH" ]; then
-            echo "⚠️ 当前仍在 '$CURRENT_BRANCH' 分支，强制切换到 '$GITHUB_BRANCH'"
-            git checkout "$GITHUB_BRANCH"
-          fi
-          echo "📍 当前工作分支已确认为: $(git branch --show-current)"
+          echo "📍 当前工作分支: $(git branch --show-current)"
+          
           # ============================================================
-          
-          echo "📋 清空当前目录（保留 .git）..."
-          find . -mindepth 1 -not -name '.git' -exec rm -rf {} + 2>/dev/null
-          
-          echo "📋 用 git archive 导出 Gitee 代码（不含 .git）..."
+          # 用 git archive 导出 Gitee 代码（直接覆盖，不清空）
+          # ============================================================
+          echo "📋 用 git archive 导出 Gitee 代码..."
           cd ../gitee_temp
           git archive --format=tar HEAD | (cd ../github_repo && tar xf -)
           cd ../github_repo
@@ -172,8 +167,8 @@ jobs:
             echo "✅ 提交成功 (分支: $(git branch --show-current))"
           fi
           
-          echo "⬆️ 推送到 GitHub (分支: $GITHUB_BRANCH)..."
-          git push origin "$GITHUB_BRANCH"
+          echo "⬆️ 推送到 GitHub (分支: ${GITHUB_BRANCH})..."
+          git push origin "${GITHUB_BRANCH}"
           
           cd ..
           rm -rf gitee_temp github_repo
