@@ -1,26 +1,26 @@
 # 仓库同步配置列表
 repositories:
-  - name: "project-a-sync"  # 示例：同步一个主分支的项目
+  - name: "pinyin_enhancement.koplugin-sync"  # 示例：同步一个主分支的项目
     gitee:
       # Gitee 仓库完整地址
-      repo_url: "https://gitee.com/xxx/project-a.git"
+      repo_url: "https://gitee.com/gytwo/pinyin_enhancement.koplugin.git"
       # 要同步的源分支
-      branch: "master"
+      branch: "sync"
     github:
       # GitHub 目标仓库名称
-      repo_name: "project-a"
+      repo_name: "https://github.com/gytwo/pinyin_enhancement.koplugin.git"
       # GitHub 目标分支名称（可选，默认与 Gitee 分支相同）
-      branch: "main"
+      branch: "sync"
       # 是否为私有仓库
       private: false
 
-  - name: "project-b-sync"  # 示例：同步一个开发分支的私有项目
+  - name: "ankimodel-sync"  # 示例：同步一个开发分支的私有项目
     gitee:
-      repo_url: "https://gitee.com/xxx/project-b.git"
-      branch: "develop"
+      repo_url: "https://gitee.com/gytwo/ankimodel.git"
+      branch: "sync"
     github:
-      repo_name: "project-b-private"
-      branch: "develop"
+      repo_name: "https://github.com/gytwo/ankimodel.git"
+      branch: "sync"
       private: true
 
 
