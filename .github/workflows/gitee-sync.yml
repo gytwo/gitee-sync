@@ -118,11 +118,44 @@ jobs:
           GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
           git clone --depth 1 -b "$GITEE_BRANCH" "$GITEE_AUTH_URL" gitee_code
           
+          if [ $? -ne 0 ]; then
+            echo "❌ 下载 Gitee 代码失败"
+            exit 1
+          fi
+          
           echo "📥 克隆 GitHub 仓库..."
           git clone "https://$GH_TOKEN@github.com/$GITHUB_USER/$GITHUB_REPO.git" github_repo
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ 克隆 GitHub 仓库失败"
+            exit 1
+          fi
+          
           cd github_repo
           
-          # 检查远程分支是否存在
+          # ============================================================
+          # 处理空仓库的情况（没有任何分支和提交）
+          # ============================================================
+          if ! git branch -a | grep -q .; then
+            echo "🆕 检测到空仓库，正在初始化..."
+            # 创建初始提交，建立默认分支
+            git checkout --orphan temp_branch
+            git commit --allow-empty -m "Initial commit"
+            git push -u origin temp_branch
+            
+            # 将 temp_branch 重命名为默认分支（master 或 main）
+            DEFAULT_BRANCH=$(git remote show origin | grep "HEAD branch" | sed 's/.*: //' || echo "master")
+            if [ "$DEFAULT_BRANCH" != "temp_branch" ]; then
+              git branch -m temp_branch "$DEFAULT_BRANCH"
+              git push origin -u "$DEFAULT_BRANCH"
+              git push origin --delete temp_branch
+            fi
+            echo "✅ 空仓库已初始化，默认分支: ${DEFAULT_BRANCH}"
+          fi
+          
+          # ============================================================
+          # 检查或创建同步分支
+          # ============================================================
           if git ls-remote --heads origin "$GITHUB_BRANCH" | grep -q "$GITHUB_BRANCH"; then
             echo "✅ 分支 ${GITHUB_BRANCH} 已存在，切换到该分支..."
             git checkout "$GITHUB_BRANCH"
@@ -134,7 +167,6 @@ jobs:
             
             # 拉取默认分支的最新代码
             git checkout "$DEFAULT_BRANCH"
-            git pull origin "$DEFAULT_BRANCH"
             
             # 基于默认分支创建新的本地分支
             git checkout -b "$GITHUB_BRANCH"
@@ -146,6 +178,9 @@ jobs:
           
           cd ..
           
+          # ============================================================
+          # 同步文件：用 Gitee 代码覆盖 GitHub 工作目录
+          # ============================================================
           echo "📋 同步文件（用 Gitee 代码覆盖 GitHub 工作目录）..."
           # 用 Gitee 的内容覆盖 GitHub 目录（保留 .git 历史）
           cp -r gitee_code/* github_repo/ 2>/dev/null || true
