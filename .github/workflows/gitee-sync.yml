@@ -1,7 +1,7 @@
 name: Sync from Gitee to GitHub
 env:
-  TZ: 'Asia/Shanghai' 
-  
+  TZ: 'Asia/Shanghai'
+
 on:
   workflow_dispatch:  # 支持手动触发
   schedule:
@@ -17,8 +17,8 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
-      
+        uses: actions/checkout@v6   # ✅ v6
+
       - name: Get repository count
         id: set-matrix
         run: |
@@ -44,11 +44,10 @@ jobs:
       fail-fast: false  # 某个仓库同步失败不影响其他仓库
     runs-on: ubuntu-latest
     steps:
-      - name: Sync from Gitee
-        uses: actions/checkout@v6
+      - name: Checkout code (for config)
+        uses: actions/checkout@v6   # ✅ v6
         with:
           persist-credentials: false
-          fetch-depth: 0
 
       - name: Load Configuration
         id: config
@@ -100,7 +99,11 @@ jobs:
             echo "✨ 仓库可见性已更新！"
           fi
 
-      - name: Sync Repository
+      # ============================================================
+      # 关键修改：这个步骤完全重写，保留了完整的 commit 历史
+      # 且只影响配置文件中指定的分支，不会动其他分支
+      # ============================================================
+      - name: Sync Repository (Preserve full commit history)
         env:
           GITEE_REPO_URL: ${{ steps.config.outputs.gitee_repo_url }}
           GITEE_BRANCH: ${{ steps.config.outputs.gitee_branch }}
@@ -115,10 +118,14 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          echo "📥 正在克隆 Gitee 仓库的 ${GITEE_BRANCH} 分支..."
-          # 构建包含认证信息的 URL
+          echo "📥 克隆 Gitee 仓库的 '${GITEE_BRANCH}' 分支（包含完整历史）..."
           GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
-          if ! git clone -b "$GITEE_BRANCH" "$GITEE_AUTH_URL" temp; then
+          
+          # --single-branch 只克隆指定分支，节省时间和空间
+          # 完整 clone 该分支的所有历史
+          git clone -b "$GITEE_BRANCH" --single-branch "$GITEE_AUTH_URL" temp
+          
+          if [ $? -ne 0 ]; then
             echo "❌ 克隆 Gitee 仓库失败"
             exit 1
           fi
@@ -129,63 +136,26 @@ jobs:
             rm -rf temp
             exit 1
           fi
-
-          echo "🔍 获取提交信息..."
-          LAST_SYNC_COMMIT=$(git log --grep="Sync from Gitee" -1 --format="%B" | grep -oP "Gitee Commit: \K[a-f0-9]+") || true
           
           cd temp
-          GITEE_LATEST_COMMIT=$(git rev-parse HEAD)
-          cd ..
           
-          echo "📊 上次同步的提交: ${LAST_SYNC_COMMIT:-无}"
-          echo "📊 Gitee 最新提交: ${GITEE_LATEST_COMMIT}"
+          echo "📊 当前分支的最后一次提交："
+          git log -1 --oneline
           
-          # if [ ! -z "$LAST_SYNC_COMMIT" ] && [ "$LAST_SYNC_COMMIT" = "$GITEE_LATEST_COMMIT" ]; then
-          #   echo "✨ 无需同步：Gitee 仓库无新更改"
-          #   rm -rf temp
-          #   exit 0
-          # fi
+          echo "📋 设置远程 GitHub 仓库..."
+          git remote add github "https://$GH_TOKEN@github.com/$GITHUB_USER/$GITHUB_REPO.git"
           
-          echo "🔄 检测到更改，开始同步..."
+          echo "⬆️ 将 '${GITEE_BRANCH}' 分支完整推送到 GitHub 的 '${GITHUB_BRANCH}' 分支..."
+          # 推送该分支的所有历史到 GitHub 的指定分支
+          # 使用 --force 是因为需要强制覆盖 GitHub 上该分支的旧内容，以实现单向同步
+          git push github "HEAD:${GITHUB_BRANCH}" --force
           
-          echo "📋 准备工作目录..."
-          WORK_DIR="sync_workspace"
-          rm -rf $WORK_DIR
-          mkdir -p $WORK_DIR
+          if [ $? -ne 0 ]; then
+            echo "❌ 推送失败"
+            exit 1
+          fi
           
-          echo "📋 复制文件到工作目录..."
-          cd temp
-          shopt -s extglob
-          cp -r !(*.git|.github) "../$WORK_DIR/"
           cd ..
           rm -rf temp
           
-          echo "🔄 准备推送代码..."
-          cd $WORK_DIR
-          
-          # 初始化 git
-          git init
-          echo "🔄 开始准备推送代码到 GitHub..."
-          
-          git add .
-          echo "✅ 已添加所有文件到暂存区"
-          
-          git commit -m "Sync from Gitee $(date '+%Y-%m-%d %H:%M:%S')
-            Gitee Commit: ${GITEE_LATEST_COMMIT}"
-          echo "✅ 已创建提交记录"
-          
-          # 推送到 GitHub
-          echo "🔗 正在配置 GitHub 远程仓库地址..."
-          git remote add origin "https://$GH_TOKEN@github.com/$GITHUB_USER/$GITHUB_REPO.git"
-          echo "✅ 远程仓库配置完成"
-          
-          echo "🌿 正在切换到 ${GITHUB_BRANCH} 分支..."
-          git branch -M ${GITHUB_BRANCH}
-          echo "✅ 分支切换完成"
-          
-          echo "⬆️ 正在推送代码到 GitHub..."
-          git push -f origin ${GITHUB_BRANCH}
-          echo "🎉 代码推送完成！"
-          
-          cd ..
-          rm -rf $WORK_DIR 
+          echo "🎉 同步完成！原始 commit 备注、作者和时间均已保留"
