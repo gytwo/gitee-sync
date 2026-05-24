@@ -143,7 +143,7 @@ jobs:
             if git ls-remote --heads github "$DEFAULT_BRANCH" | grep -q "$DEFAULT_BRANCH"; then
               echo "📌 找到 ${DEFAULT_BRANCH} 分支，正在 rebase..."
               git fetch github "$DEFAULT_BRANCH"
-              if git rebase "github/${DEFAULT_BRANCH}" --onto; then
+              if git rebase "github/${DEFAULT_BRANCH}"; then
                 echo "✅ Rebase 成功！${GITHUB_BRANCH} 分支现在基于 ${DEFAULT_BRANCH}"
               else
                 echo "⚠️ Rebase 遇到冲突，正在放弃 rebase..."
