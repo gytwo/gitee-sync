@@ -17,7 +17,7 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6   # ✅ v6
+        uses: actions/checkout@v6
 
       - name: Get repository count
         id: set-matrix
@@ -45,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code (for config)
-        uses: actions/checkout@v6   # ✅ v6
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -99,11 +99,7 @@ jobs:
             echo "✨ 仓库可见性已更新！"
           fi
 
-      # ============================================================
-      # 关键修改：这个步骤完全重写，保留了完整的 commit 历史
-      # 且只影响配置文件中指定的分支，不会动其他分支
-      # ============================================================
-      - name: Sync Repository (Preserve full commit history)
+      - name: Sync Repository (with rebase for automatic PR)
         env:
           GITEE_REPO_URL: ${{ steps.config.outputs.gitee_repo_url }}
           GITEE_BRANCH: ${{ steps.config.outputs.gitee_branch }}
@@ -118,11 +114,8 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
-          echo "📥 克隆 Gitee 仓库的 '${GITEE_BRANCH}' 分支（包含完整历史）..."
+          echo "📥 克隆 Gitee 仓库的 '${GITEE_BRANCH}' 分支..."
           GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
-          
-          # --single-branch 只克隆指定分支，节省时间和空间
-          # 完整 clone 该分支的所有历史
           git clone -b "$GITEE_BRANCH" --single-branch "$GITEE_AUTH_URL" temp
           
           if [ $? -ne 0 ]; then
@@ -130,24 +123,31 @@ jobs:
             exit 1
           fi
           
-          echo "📋 检查仓库内容..."
-          if [ ! "$(ls -A temp)" ]; then
-            echo "❌ Gitee 仓库为空"
-            rm -rf temp
-            exit 1
-          fi
-          
           cd temp
-          
-          echo "📊 当前分支的最后一次提交："
-          git log -1 --oneline
           
           echo "📋 设置远程 GitHub 仓库..."
           git remote add github "https://$GH_TOKEN@github.com/$GITHUB_USER/$GITHUB_REPO.git"
           
-          echo "⬆️ 将 '${GITEE_BRANCH}' 分支完整推送到 GitHub 的 '${GITHUB_BRANCH}' 分支..."
-          # 推送该分支的所有历史到 GitHub 的指定分支
-          # 使用 --force 是因为需要强制覆盖 GitHub 上该分支的旧内容，以实现单向同步
+          echo "🔄 检查 GitHub main 分支..."
+          git fetch github main
+          
+          # 如果 main 分支存在，则进行 rebase
+          if git ls-remote --heads github main | grep -q main; then
+            echo "📌 找到 main 分支，正在 rebase..."
+            # 尝试 rebase，如果有冲突则跳过并提示
+            if git rebase github/main --onto; then
+              echo "✅ Rebase 成功！sync 分支现在基于 main"
+            else
+              echo "⚠️ Rebase 遇到冲突，正在放弃 rebase..."
+              git rebase --abort
+              echo "⚠️ 请手动解决冲突后重新同步"
+              exit 1
+            fi
+          else
+            echo "⚠️ main 分支不存在，跳过 rebase（这是第一次同步）"
+          fi
+          
+          echo "⬆️ 推送 ${GITEE_BRANCH} 分支到 GitHub 的 ${GITHUB_BRANCH} 分支..."
           git push github "HEAD:${GITHUB_BRANCH}" --force
           
           if [ $? -ne 0 ]; then
@@ -158,4 +158,6 @@ jobs:
           cd ..
           rm -rf temp
           
-          echo "🎉 同步完成！原始 commit 备注、作者和时间均已保留"
+          echo "🎉 同步完成！"
+          echo "📝 原始 commit 备注、作者、时间均已保留"
+          echo "🔗 sync 分支已基于 main（如果 main 存在），PR 可以自动合并"
