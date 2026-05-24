@@ -14,7 +14,7 @@ repositories:
       # 是否为私有仓库
       private: false
 
-    - name: "cloudlibrary.koplugin-sync"  # 示例：同步一个主分支的项目
+  - name: "cloudlibrary.koplugin-sync"  # 示例：同步一个主分支的项目
     gitee:
       # Gitee 仓库完整地址
       repo_url: "https://gitee.com/gytwo/cloudlibrary.koplugin.git"
@@ -28,7 +28,7 @@ repositories:
       # 是否为私有仓库
       private: false
 
-      - name: "pinyin_enhancement.koplugin-sync"  # 示例：同步一个主分支的项目
+  - name: "pinyin_enhancement.koplugin-sync"  # 示例：同步一个主分支的项目
     gitee:
       # Gitee 仓库完整地址
       repo_url: "https://gitee.com/gytwo/pinyin_enhancement.koplugin.git"
