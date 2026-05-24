@@ -8,7 +8,7 @@ repositories:
       branch: "sync"
     github:
       # GitHub 目标仓库名称
-      repo_name: "inyin_enhancement.koplugin"
+      repo_name: "pinyin_enhancement.koplugin"
       # GitHub 目标分支名称（可选，默认与 Gitee 分支相同）
       branch: "sync"
       # 是否为私有仓库
