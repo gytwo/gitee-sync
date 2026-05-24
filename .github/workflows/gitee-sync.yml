@@ -79,6 +79,8 @@ jobs:
           GITHUB_PRIVATE: ${{ steps.config.outputs.github_private }}
         run: |
           echo "🔍 正在检查 GitHub 仓库是否存在..."
+          echo "  用户: $GITHUB_USER"
+          echo "  仓库: $GITHUB_REPO"
           REPO_EXISTS=$(curl -s -H "Authorization: token $GH_TOKEN" \
             "https://api.github.com/repos/$GITHUB_USER/$GITHUB_REPO" | jq -r '.id // empty')
           
@@ -91,10 +93,10 @@ jobs:
             echo "✨ 仓库创建成功！"
             
             # 等待 GitHub 完成仓库初始化
-            echo "⏳ 等待仓库初始化（5秒）..."
-            sleep 5
+            echo "⏳ 等待仓库初始化（10秒）..."
+            sleep 10
           else
-            echo "✅ 仓库已存在"
+            echo "✅ 仓库已存在 (ID: $REPO_EXISTS)"
           fi
 
       - name: Sync Repository
@@ -112,7 +114,14 @@ jobs:
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
           
+          # ============================================================
+          # 第一步：下载 Gitee 代码
+          # ============================================================
+          echo "========================================"
           echo "📥 下载 Gitee 仓库的最终代码..."
+          echo "  Gitee 仓库: $GITEE_REPO_URL"
+          echo "  Gitee 分支: $GITEE_BRANCH"
+          
           GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
           git clone --depth 1 -b "$GITEE_BRANCH" "$GITEE_AUTH_URL" gitee_code
           
@@ -121,7 +130,22 @@ jobs:
             exit 1
           fi
           
+          # 调试：查看 Gitee 代码目录内容
+          echo "🔍 Gitee 代码目录内容："
+          ls -la gitee_code/
+          echo "🔍 Gitee 代码文件数量："
+          find gitee_code -type f | wc -l
+          echo "🔍 Gitee 代码目录树（前20行）："
+          find gitee_code -type f | head -20
+          
+          # ============================================================
+          # 第二步：克隆 GitHub 仓库
+          # ============================================================
+          echo "========================================"
           echo "📥 克隆 GitHub 仓库..."
+          echo "  GitHub 仓库: $GITHUB_USER/$GITHUB_REPO"
+          echo "  GitHub 分支: $GITHUB_BRANCH"
+          
           git clone "https://$GH_TOKEN@github.com/$GITHUB_USER/$GITHUB_REPO.git" github_repo
           
           if [ $? -ne 0 ]; then
@@ -132,12 +156,14 @@ jobs:
           cd github_repo
           
           # ============================================================
-          # 处理空仓库的情况（模拟手动创建）
+          # 第三步：处理空仓库
           # ============================================================
+          echo "========================================"
+          echo "🔍 检查 GitHub 仓库状态..."
+          
           if ! git branch -a | grep -q .; then
             echo "🆕 检测到空仓库，正在初始化（模拟手动创建）..."
             
-            # 按照你的手动命令：创建 main 分支 + README + 第一次提交
             git checkout --orphan main
             echo "# ${GITHUB_REPO}" >> README.md
             git add README.md
@@ -145,21 +171,28 @@ jobs:
             git push -u origin main
             
             echo "✅ 空仓库已初始化，默认分支: main"
+          else
+            echo "✅ GitHub 仓库非空"
+            echo "🔍 现有分支列表："
+            git branch -a
           fi
           
           # ============================================================
-          # 检查或创建同步分支
+          # 第四步：检查或创建同步分支
           # ============================================================
+          echo "========================================"
+          echo "🔍 检查同步分支..."
+          
           if git ls-remote --heads origin "$GITHUB_BRANCH" | grep -q "$GITHUB_BRANCH"; then
             echo "✅ 分支 ${GITHUB_BRANCH} 已存在，切换到该分支..."
             git checkout "$GITHUB_BRANCH"
+            echo "🔍 当前分支: $(git branch --show-current)"
+            echo "🔍 当前分支文件列表："
+            ls -la
           else
             echo "🆕 分支 ${GITHUB_BRANCH} 不存在，基于 main 分支创建新分支..."
-            # 确保 main 分支存在
             git checkout main
-            # 基于 main 创建新的本地分支
             git checkout -b "$GITHUB_BRANCH"
-            # 将新分支推送到远程
             git push -u origin "$GITHUB_BRANCH"
             echo "✨ 已在 GitHub 上创建分支 ${GITHUB_BRANCH}"
           fi
@@ -167,18 +200,37 @@ jobs:
           cd ..
           
           # ============================================================
-          # 同步文件：用 Gitee 代码覆盖 GitHub 工作目录
+          # 第五步：同步文件
           # ============================================================
+          echo "========================================"
           echo "📋 同步文件（用 Gitee 代码覆盖 GitHub 工作目录）..."
+          
+          # 备份原来的 GitHub 目录内容（调试用）
+          echo "🔍 覆盖前 GitHub 目录内容："
+          ls -la github_repo/ | head -20
+          
           # 用 Gitee 的内容覆盖 GitHub 目录（保留 .git 历史）
           cp -r gitee_code/* github_repo/ 2>/dev/null || true
           cp -r gitee_code/.[!.]* github_repo/ 2>/dev/null || true
           
+          echo "🔍 覆盖后 GitHub 目录内容："
+          ls -la github_repo/ | head -20
+          
           cd github_repo
           
-          echo "📊 检测所有变化（包括修改、新增、删除）..."
+          # ============================================================
+          # 第六步：检测变化并提交
+          # ============================================================
+          echo "========================================"
+          echo "📊 检测所有变化..."
+          
+          echo "🔍 Git 状态（修改、新增、删除）："
+          git status --porcelain
+          
+          echo "🔍 暂存区变化统计："
           git add .
-          git add -u   # 记录文件的删除
+          git add -u
+          git diff --cached --stat
           
           # 检查是否有变化
           if git diff --cached --quiet; then
@@ -187,13 +239,18 @@ jobs:
             echo "📝 检测到变化，创建新提交..."
             git commit -m "Sync from Gitee ${GITEE_BRANCH} @ $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
             echo "✅ 提交成功"
+            
+            echo "🔍 最新提交信息："
+            git log -1 --oneline
           fi
           
+          echo "========================================"
           echo "⬆️ 推送到 GitHub..."
           git push origin "$GITHUB_BRANCH"
           
           cd ..
           rm -rf gitee_code github_repo
           
+          echo "========================================"
           echo "🎉 同步完成！"
           echo "📝 GitHub 上的原有提交记录已全部保留"
