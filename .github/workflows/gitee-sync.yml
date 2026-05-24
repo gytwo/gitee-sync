@@ -1,5 +1,7 @@
 name: Sync from Gitee to GitHub
-
+env:
+  TZ: 'Asia/Shanghai' 
+  
 on:
   workflow_dispatch:  # 支持手动触发
   schedule:
