@@ -126,8 +126,8 @@ jobs:
           GITEE_PASSWORD: ${{ secrets.GITEE_PASSWORD }}
         run: |
           echo "🔧 配置 Git 用户信息..."
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name "gytwo"
+          git config --global user.email "15279172411@163.com"
           
           echo "📥 下载 Gitee 仓库的最终代码..."
           GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
