@@ -1,6 +1,9 @@
 name: Release
 
 on:
+  schedule:
+    # 每6小时检查一次
+    - cron: '30 */6 * * *'
   workflow_dispatch:
     inputs:
       release_type:
@@ -11,11 +14,6 @@ on:
         options:
           - beta
           - stable
-      branch:
-        description: 'Branch for stable release (only when release_type=stable)'
-        required: false
-        default: 'main'
-        type: string
       repo_filter:
         description: 'Repository filter (optional, leave empty for all)'
         required: false
@@ -42,10 +40,6 @@ jobs:
         run: |
           if [ -f "release-config.yml" ]; then
             CONFIG_FILE="release-config.yml"
-          elif [ -f "../release-config.yml" ]; then
-            CONFIG_FILE="../release-config.yml"
-          elif [ -f ".github/release-config.yml" ]; then
-            CONFIG_FILE=".github/release-config.yml"
           else
             echo "ERROR: 找不到 release-config.yml"
             exit 1
@@ -82,10 +76,13 @@ jobs:
     strategy:
       matrix:
         repository: ${{ fromJson(needs.prepare.outputs.matrix).repository }}
+        release_type:
+          - beta
+          - stable
       max-parallel: 1
       fail-fast: false
     runs-on: ubuntu-latest
-    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }} (${{ github.event.inputs.release_type || 'beta' }})
+    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }} (${{ matrix.release_type }})
 
     steps:
       - name: Checkout config
@@ -93,24 +90,14 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Determine release type and branch
+      - name: Set branch and prerelease
         id: type
         run: |
-          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
-          if [ -z "$RELEASE_TYPE" ]; then
-            RELEASE_TYPE="beta"
-          fi
-          echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
-          
-          if [ "$RELEASE_TYPE" = "beta" ]; then
+          if [ "${{ matrix.release_type }}" = "beta" ]; then
             echo "branch=sync" >> $GITHUB_OUTPUT
             echo "prerelease=true" >> $GITHUB_OUTPUT
           else
-            BRANCH="${{ github.event.inputs.branch }}"
-            if [ -z "$BRANCH" ]; then
-              BRANCH="main"
-            fi
-            echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+            echo "branch=main" >> $GITHUB_OUTPUT
             echo "prerelease=false" >> $GITHUB_OUTPUT
           fi
 
@@ -125,7 +112,7 @@ jobs:
           fi
 
           REPO_INDEX=${{ matrix.repository }}
-          RELEASE_TYPE="${{ steps.type.outputs.release_type }}"
+          RELEASE_TYPE="${{ matrix.release_type }}"
 
           NAME=$(yq e ".repositories[$REPO_INDEX].name" "$CONFIG_FILE")
           REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
@@ -140,11 +127,46 @@ jobs:
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
 
-          echo "📦 准备发布: $NAME"
-          echo "🏷️ 类型: $RELEASE_TYPE"
+      - name: Check for changes
+        if: steps.config.outputs.skip != 'true'
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          REPO_PATH="${{ steps.config.outputs.repo_path }}"
+          BRANCH="${{ steps.type.outputs.branch }}"
+          
+          # 获取分支最后一次 commit 的时间
+          LAST_COMMIT_TIME=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
+          
+          # 获取该分支最后一次 release 的时间
+          RELEASES=$(gh release list --repo "$REPO_PATH" --limit 10 --json tagName,createdAt)
+          LAST_RELEASE_TIME=""
+          for tag in $(echo "$RELEASES" | jq -r '.[].tagName'); do
+            TAG_COMMIT_TIME=$(gh api repos/$REPO_PATH/commits/$tag --jq '.commit.committer.date' 2>/dev/null || echo "")
+            if [ -n "$TAG_COMMIT_TIME" ]; then
+              LAST_RELEASE_TIME="$TAG_COMMIT_TIME"
+              break
+            fi
+          done
+          
+          echo "分支: $BRANCH"
+          echo "最后一次 commit 时间: $LAST_COMMIT_TIME"
+          echo "最后一次 release 时间: $LAST_RELEASE_TIME"
+          
+          if [ -z "$LAST_RELEASE_TIME" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "没有找到任何 release，将发布"
+          elif [ "$LAST_COMMIT_TIME" \> "$LAST_RELEASE_TIME" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "检测到新的 commit，将发布"
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "没有新的 commit，跳过发布"
+          fi
 
       - name: Checkout repository
-        if: steps.config.outputs.skip != 'true'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         uses: actions/checkout@v6
         with:
           repository: ${{ steps.config.outputs.repo_path }}
@@ -153,7 +175,7 @@ jobs:
           fetch-depth: 0
 
       - name: Read version from _meta.lua
-        if: steps.config.outputs.skip != 'true'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         id: meta
         run: |
           cd repo
@@ -166,7 +188,7 @@ jobs:
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
 
       - name: Resolve tag (beta only)
-        if: steps.config.outputs.skip != 'true' && steps.type.outputs.release_type == 'beta'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true' && steps.type.outputs.prerelease == 'true'
         id: tag
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -179,20 +201,17 @@ jobs:
           while gh release view "${BASE}-beta.${N}" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; do
             N=$((N + 1))
           done
-          BETA_TAG="${BASE}-beta.${N}"
-          BETA_VERSION="${META_VERSION}-beta.${N}"
-          echo "tag=$BETA_TAG" >> $GITHUB_OUTPUT
-          echo "version=$BETA_VERSION" >> $GITHUB_OUTPUT
+          echo "tag=${BASE}-beta.${N}" >> $GITHUB_OUTPUT
 
       - name: Stamp beta version in _meta.lua (beta only)
-        if: steps.config.outputs.skip != 'true' && steps.type.outputs.release_type == 'beta'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true' && steps.type.outputs.prerelease == 'true'
         run: |
           cd repo
-          BETA_VERSION="${{ steps.tag.outputs.version }}"
+          BETA_VERSION="${{ steps.tag.outputs.tag }}"
           sed -i "s/version = \"[^\"]*\"/version = \"${BETA_VERSION}\"/" _meta.lua
 
       - name: Build plugin zip
-        if: steps.config.outputs.skip != 'true'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         run: |
           cd repo
           mkdir -p dist
@@ -205,7 +224,7 @@ jobs:
             -x "node_modules/*"
 
       - name: Build release notes
-        if: steps.config.outputs.skip != 'true'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         run: |
           cd repo
           VERSION="${{ steps.meta.outputs.version }}"
@@ -230,12 +249,12 @@ jobs:
           PYEOF
 
       - name: Create Release
-        if: steps.config.outputs.skip != 'true'
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd repo
-          if [ "${{ steps.type.outputs.release_type }}" = "beta" ]; then
+          if [ "${{ steps.type.outputs.prerelease }}" = "true" ]; then
             TAG="${{ steps.tag.outputs.tag }}"
             PRERELEASE="--prerelease"
           else
@@ -249,7 +268,6 @@ jobs:
             --title "$TAG" \
             --notes-file ../release_notes.md \
             $PRERELEASE \
-            --target "${{ github.sha }}" \
             || echo "⚠️ Release $TAG 可能已存在，跳过创建"
           
           echo "🎉 Release $TAG 处理完成"
