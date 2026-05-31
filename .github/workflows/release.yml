@@ -73,6 +73,12 @@ jobs:
       - name: Load Configuration
         id: config
         run: |
+          # 先确认文件在哪里
+          echo "当前目录: $(pwd)"
+          echo "列出文件:"
+          ls -la
+          echo "查找 release-config.yml:"
+          find . -name "release-config.yml" -type f
           REPO_INDEX=${{ matrix.repository }}
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
           
