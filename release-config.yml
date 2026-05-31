@@ -26,6 +26,8 @@ repositories:
         version_source: "_meta.lua"
         changelog_source: "changelog.lua"
       stable:
-        enabled: false
+        enabled: true
         branch: "main"
         prerelease: false
+        version_source: "_meta.lua"
+        changelog_source: "changelog.lua"
