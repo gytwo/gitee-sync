@@ -27,8 +27,10 @@ jobs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
       repo_names: ${{ steps.set-matrix.outputs.repo_names }}
     steps:
-      - name: Checkout code
+      - name: Checkout code (for config)
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Get repository list
         id: set-matrix
