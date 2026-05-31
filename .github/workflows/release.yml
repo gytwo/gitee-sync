@@ -133,16 +133,16 @@ jobs:
           LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
           LAST_COMMIT_TIME_BJ=$(date -d "$LAST_COMMIT_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
           
-          # 获取所有 releases 的详细信息（保留完整日志）
+          # 获取所有 releases 的详细信息
           echo ""
           echo "=== Releases 信息 ==="
           gh api repos/$REPO_PATH/releases --jq '.[] | {tag_name: .tag_name, created_at: .created_at, published_at: .published_at, prerelease: .prerelease}'
           
-          # 获取最后一次 release 的 created_at（该 release 对应的 commit 时间）
+          # 获取最后一次 release 的 published_at（发布时间）
           if [ "$PRERELEASE" = "true" ]; then
-            LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .created_at][0]' 2>/dev/null || echo "")
+            LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .published_at][0]' 2>/dev/null || echo "")
           else
-            LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .created_at][0]' 2>/dev/null || echo "")
+            LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .published_at][0]' 2>/dev/null || echo "")
           fi
           
           if [ -n "$LAST_RELEASE_TIME_UTC" ]; then
@@ -156,18 +156,18 @@ jobs:
           echo "分支: $BRANCH"
           echo "最后 commit 时间 (UTC): $LAST_COMMIT_TIME_UTC"
           echo "最后 commit 时间 (北京时间): $LAST_COMMIT_TIME_BJ"
-          echo "最后 release created_at 时间 (UTC): $LAST_RELEASE_TIME_UTC"
-          echo "最后 release created_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
+          echo "最后 release published_at 时间 (UTC): $LAST_RELEASE_TIME_UTC"
+          echo "最后 release published_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
           
           if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "没有找到任何 release，将发布"
           elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "检测到新的 commit (commit 时间 > release created_at)，将发布"
+            echo "检测到新的 commit (commit 时间 > release 发布时间)，将发布"
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "没有新的 commit (commit 时间 ≤ release created_at)，跳过发布"
+            echo "没有新的 commit (commit 时间 ≤ release 发布时间)，跳过发布"
           fi
 
       - name: Checkout repository
@@ -264,12 +264,16 @@ jobs:
             PRERELEASE_FLAG=""
           fi
           
-          gh release create "$TAG" \
-            dist/${{ steps.config.outputs.name }}.zip \
-            --repo "${{ steps.config.outputs.repo_path }}" \
-            --title "$TAG" \
-            --notes-file ../release_notes.md \
-            $PRERELEASE_FLAG \
-            || echo "⚠️ Release $TAG 可能已存在，跳过创建"
-          
-          echo "🎉 Release $TAG 处理完成"
+          # 检查 release 是否存在
+          if gh release view "$TAG" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; then
+            echo "⚠️ Release $TAG 已存在，跳过创建"
+          else
+            echo "🚀 创建新的 Release: $TAG"
+            gh release create "$TAG" \
+              dist/${{ steps.config.outputs.name }}.zip \
+              --repo "${{ steps.config.outputs.repo_path }}" \
+              --title "$TAG" \
+              --notes-file ../release_notes.md \
+              $PRERELEASE_FLAG
+            echo "🎉 Release $TAG 创建成功"
+          fi
