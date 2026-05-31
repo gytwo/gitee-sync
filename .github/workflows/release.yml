@@ -32,15 +32,38 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Debug - show what was checked out
+        run: |
+          echo "当前分支: $(git branch --show-current)"
+          echo "当前 commit: $(git log -1 --format=%H)"
+          echo "文件列表:"
+          ls -la
+          echo "查找 release-config.yml:"
+          find . -name "release-config.yml"
+
       - name: Get repository list
         id: set-matrix
         run: |
-          REPO_COUNT=$(yq e '.repositories | length' release-config.yml)
+          # 尝试多个可能的位置
+          if [ -f "release-config.yml" ]; then
+            CONFIG_FILE="release-config.yml"
+          elif [ -f "../release-config.yml" ]; then
+            CONFIG_FILE="../release-config.yml"
+          elif [ -f ".github/release-config.yml" ]; then
+            CONFIG_FILE=".github/release-config.yml"
+          else
+            echo "ERROR: 找不到 release-config.yml"
+            find . -name "release-config.yml" -type f
+            exit 1
+          fi
+          
+          echo "使用配置文件: $CONFIG_FILE"
+          REPO_COUNT=$(yq e '.repositories | length' "$CONFIG_FILE")
           
           INDICES="["
           NAMES="["
           for ((i=0; i<$REPO_COUNT; i++)); do
-            NAME=$(yq e ".repositories[$i].name" release-config.yml)
+            NAME=$(yq e ".repositories[$i].name" "$CONFIG_FILE")
             FILTER="${{ github.event.inputs.repo_filter }}"
             if [ -n "$FILTER" ] && [[ "$NAME" != *"$FILTER"* ]]; then
               echo "Skipping $NAME (filter: $FILTER)"
@@ -72,21 +95,32 @@ jobs:
     name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }}
     
     steps:
+      - name: Checkout config
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
       - name: Load Configuration
         id: config
         run: |
-          # 先确认文件在哪里
-          echo "当前目录: $(pwd)"
-          echo "列出文件:"
-          ls -la
-          echo "查找 release-config.yml:"
-          find . -name "release-config.yml" -type f
+          # 找到配置文件
+          if [ -f "release-config.yml" ]; then
+            CONFIG_FILE="release-config.yml"
+          elif [ -f "../release-config.yml" ]; then
+            CONFIG_FILE="../release-config.yml"
+          elif [ -f ".github/release-config.yml" ]; then
+            CONFIG_FILE=".github/release-config.yml"
+          else
+            echo "ERROR: 找不到 release-config.yml"
+            exit 1
+          fi
+          
           REPO_INDEX=${{ matrix.repository }}
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
           
-          NAME=$(yq e ".repositories[$REPO_INDEX].name" release-config.yml)
-          REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" release-config.yml)
-          ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled" release-config.yml)
+          NAME=$(yq e ".repositories[$REPO_INDEX].name" "$CONFIG_FILE")
+          REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
+          ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled" "$CONFIG_FILE")
           
           if [ "$ENABLED" != "true" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
@@ -94,8 +128,8 @@ jobs:
             exit 0
           fi
           
-          BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" release-config.yml)
-          PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // true" release-config.yml)
+          BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
+          PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // true" "$CONFIG_FILE")
           
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
@@ -122,6 +156,10 @@ jobs:
           cd repo
           
           # 读取版本号
+          if [ ! -f "_meta.lua" ]; then
+            echo "ERROR: _meta.lua not found"
+            exit 1
+          fi
           VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
@@ -147,13 +185,14 @@ jobs:
             -x ".github/*" \
             -x "dist/*" \
             -x "*.zip" \
-            -x "picture/*"
+            -x "picture/*" \
+            -x "node_modules/*"
           echo "📦 打包完成"
 
       - name: Create Release
         if: steps.config.outputs.skip != 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd repo
           TAG="${{ steps.version.outputs.tag }}"
@@ -178,8 +217,6 @@ jobs:
             --title "$TAG" \
             --notes-file ../release_notes.md \
             $([ "${{ steps.config.outputs.prerelease }}" = "true" ] && echo "--prerelease") \
-            --target "${{ github.sha }}" \
-            --target "${{ steps.config.outputs.branch }}" \
             || echo "Release may already exist, skipping"
           
           echo "🎉 Release 创建成功: $TAG"
