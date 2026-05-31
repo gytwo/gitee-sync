@@ -123,7 +123,7 @@ jobs:
         if: steps.config.outputs.skip != 'true'
         id: check
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           REPO_PATH="${{ steps.config.outputs.repo_path }}"
           BRANCH="${{ steps.config.outputs.branch }}"
@@ -182,7 +182,7 @@ jobs:
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true' && steps.config.outputs.prerelease == 'true'
         id: tag
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd repo
           META_VERSION="${{ steps.meta.outputs.version }}"
@@ -239,7 +239,7 @@ jobs:
       - name: Create Release
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd repo
           if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
