@@ -16,8 +16,8 @@ repositories:
         version_source: "_meta.lua"
         changelog_source: "changelog.lua"
 
-  - name: "pinyin_encment.koplugin"
-    path: "gytwo/pinyin_encment.koplugin"
+  - name: "pinyin_enhancement.koplugin"
+    path: "gytwo/pinyin_enhancement.koplugin"
     release:
       beta:
         enabled: true
