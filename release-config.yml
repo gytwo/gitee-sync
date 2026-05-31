@@ -1,0 +1,31 @@
+# Release 发布配置列表
+repositories:
+  - name: "cloudlibrary.koplugin"
+    path: "gytwo/cloudlibrary.koplugin"
+    release:
+      beta:
+        enabled: true
+        branch: "sync"
+        prerelease: true
+        version_source: "_meta.lua"
+        changelog_source: "changelog.lua"
+      stable:
+        enabled: true
+        branch: "main"
+        prerelease: false
+        version_source: "_meta.lua"
+        changelog_source: "changelog.lua"
+
+  - name: "pinyin_encment.koplugin"
+    path: "gytwo/pinyin_encment.koplugin"
+    release:
+      beta:
+        enabled: true
+        branch: "sync"
+        prerelease: true
+        version_source: "_meta.lua"
+        changelog_source: "changelog.lua"
+      stable:
+        enabled: false
+        branch: "main"
+        prerelease: false
