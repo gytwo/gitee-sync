@@ -1,6 +1,16 @@
 name: Release
 
 on:
+  push:
+    branches:
+      - sync
+      - main
+      - master
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - master
   workflow_dispatch:
     inputs:
       release_type:
@@ -11,6 +21,11 @@ on:
         options:
           - beta
           - stable
+      branch:
+        description: 'Branch for stable release (only when release_type=stable)'
+        required: false
+        default: 'main'
+        type: string
       repo_filter:
         description: 'Repository filter (optional, leave empty for all)'
         required: false
@@ -80,7 +95,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
     runs-on: ubuntu-latest
-    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }} (${{ github.event.inputs.release_type }})
+    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }} (${{ github.event.inputs.release_type || (github.ref_name == 'sync' && 'beta') || ((github.ref_name == 'main' || github.ref_name == 'master') && 'stable') || 'beta' }})
 
     steps:
       - name: Checkout config
@@ -88,22 +103,55 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Determine release type and branch
+        id: type
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            REF_NAME="${{ github.ref_name }}"
+            if [ "$REF_NAME" = "sync" ]; then
+              echo "release_type=beta" >> $GITHUB_OUTPUT
+              echo "branch=sync" >> $GITHUB_OUTPUT
+              echo "prerelease=true" >> $GITHUB_OUTPUT
+            elif [ "$REF_NAME" = "main" ] || [ "$REF_NAME" = "master" ]; then
+              echo "release_type=stable" >> $GITHUB_OUTPUT
+              echo "branch=$REF_NAME" >> $GITHUB_OUTPUT
+              echo "prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          elif [ "${{ github.event_name }}" = "pull_request" ] && [ "${{ github.event.pull_request.merged }}" = "true" ]; then
+            PR_BASE_REF="${{ github.event.pull_request.base.ref }}"
+            if [ "$PR_BASE_REF" = "main" ] || [ "$PR_BASE_REF" = "master" ]; then
+              echo "release_type=stable" >> $GITHUB_OUTPUT
+              echo "branch=$PR_BASE_REF" >> $GITHUB_OUTPUT
+              echo "prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+            echo "release_type=$RELEASE_TYPE" >> $GITHUB_OUTPUT
+            if [ "$RELEASE_TYPE" = "beta" ]; then
+              echo "branch=sync" >> $GITHUB_OUTPUT
+              echo "prerelease=true" >> $GITHUB_OUTPUT
+            else
+              BRANCH="${{ github.event.inputs.branch }}"
+              if [ -z "$BRANCH" ]; then
+                BRANCH="main"
+              fi
+              echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+              echo "prerelease=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
       - name: Load Configuration
         id: config
         run: |
           if [ -f "release-config.yml" ]; then
             CONFIG_FILE="release-config.yml"
-          elif [ -f "../release-config.yml" ]; then
-            CONFIG_FILE="../release-config.yml"
-          elif [ -f ".github/release-config.yml" ]; then
-            CONFIG_FILE=".github/release-config.yml"
           else
             echo "ERROR: 找不到 release-config.yml"
             exit 1
           fi
 
           REPO_INDEX=${{ matrix.repository }}
-          RELEASE_TYPE="${{ github.event.inputs.release_type }}"
+          RELEASE_TYPE="${{ steps.type.outputs.release_type }}"
 
           NAME=$(yq e ".repositories[$REPO_INDEX].name" "$CONFIG_FILE")
           REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
@@ -115,16 +163,10 @@ jobs:
             exit 0
           fi
 
-          BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
-          PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // true" "$CONFIG_FILE")
-
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
-          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
-          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
 
           echo "📦 准备发布: $NAME"
-          echo "🔖 分支: $BRANCH"
           echo "🏷️ 类型: $RELEASE_TYPE"
 
       - name: Checkout repository
@@ -132,38 +174,48 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: ${{ steps.config.outputs.repo_path }}
-          ref: ${{ steps.config.outputs.branch }}
+          ref: ${{ steps.type.outputs.branch }}
           path: repo
           fetch-depth: 0
 
-      - name: Read version and changelog
+      - name: Read version from _meta.lua
         if: steps.config.outputs.skip != 'true'
-        id: version
+        id: meta
         run: |
           cd repo
-          
-          # 读取版本号
           VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
+          if [[ -z "$VERSION" ]]; then
+            echo "Error: could not extract version from _meta.lua" >&2
+            exit 1
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-          
-          # 提取更新日志
-          python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
-          import re, sys
-          version = sys.argv[1]
-          with open("changelog.lua") as f:
-              content = f.read()
-          pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-          m = re.search(pattern, content, re.DOTALL)
-          if m:
-              block = m.group(1)
-              items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-              print("## What's Changed\n")
-              for item in items:
-                  print(f"- {item}")
-          else:
-              print("## What's Changed\n\n_No changelog entries for this version._")
-          PYEOF
+
+      - name: Resolve tag (beta only)
+        if: steps.config.outputs.skip != 'true' && steps.type.outputs.release_type == 'beta'
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          cd repo
+          META_VERSION="${{ steps.meta.outputs.version }}"
+          BASE="v${META_VERSION}"
+
+          N=1
+          while gh release view "${BASE}-beta.${N}" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; do
+            N=$((N + 1))
+          done
+          BETA_TAG="${BASE}-beta.${N}"
+          BETA_VERSION="${META_VERSION}-beta.${N}"
+          echo "tag=$BETA_TAG" >> $GITHUB_OUTPUT
+          echo "version=$BETA_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Stamp beta version in _meta.lua (beta only)
+        if: steps.config.outputs.skip != 'true' && steps.type.outputs.release_type == 'beta'
+        run: |
+          cd repo
+          BETA_VERSION="${{ steps.tag.outputs.version }}"
+          sed -i "s/version = \"[^\"]*\"/version = \"${BETA_VERSION}\"/" _meta.lua
 
       - name: Build plugin zip
         if: steps.config.outputs.skip != 'true'
@@ -177,7 +229,31 @@ jobs:
             -x "*.zip" \
             -x "picture/*" \
             -x "node_modules/*"
-          echo "✅ 打包完成"
+
+      - name: Build release notes
+        if: steps.config.outputs.skip != 'true'
+        run: |
+          cd repo
+          VERSION="${{ steps.meta.outputs.version }}"
+          python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
+          import re, sys
+          version = sys.argv[1]
+          try:
+              with open("changelog.lua") as f:
+                  content = f.read()
+              pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+              m = re.search(pattern, content, re.DOTALL)
+              if m:
+                  block = m.group(1)
+                  items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+                  print("## What's Changed\n")
+                  for item in items:
+                      print(f"- {item}")
+              else:
+                  print("## What's Changed\n\n_No changelog entries for this version._")
+          except FileNotFoundError:
+              print("## What's Changed\n\n_`changelog.lua` file not found_")
+          PYEOF
 
       - name: Create Release
         if: steps.config.outputs.skip != 'true'
@@ -185,19 +261,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd repo
-          TAG="v${{ steps.version.outputs.version }}"
-          
-          # 如果是 beta 版本，添加 beta 序号
-          if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
-            MAX_BETA=0
-            for t in $(git tag -l "v${{ steps.version.outputs.version }}-beta.*"); do
-              num=$(echo "$t" | grep -oP 'beta\.\K\d+')
-              if [ -n "$num" ] && [ "$num" -gt "$MAX_BETA" ]; then
-                MAX_BETA=$num
-              fi
-            done
-            N=$((MAX_BETA + 1))
-            TAG="v${{ steps.version.outputs.version }}-beta.$N"
+          if [ "${{ steps.type.outputs.release_type }}" = "beta" ]; then
+            TAG="${{ steps.tag.outputs.tag }}"
+            PRERELEASE="--prerelease"
+          else
+            TAG="${{ steps.meta.outputs.tag }}"
+            PRERELEASE=""
           fi
           
           gh release create "$TAG" \
@@ -205,7 +274,8 @@ jobs:
             --repo "${{ steps.config.outputs.repo_path }}" \
             --title "$TAG" \
             --notes-file ../release_notes.md \
-            $([ "${{ steps.config.outputs.prerelease }}" = "true" ] && echo "--prerelease") \
+            $PRERELEASE \
+            --target "${{ github.sha }}" \
             || echo "⚠️ Release $TAG 可能已存在，跳过创建"
           
           echo "🎉 Release $TAG 处理完成"
