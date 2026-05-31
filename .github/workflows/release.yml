@@ -32,19 +32,9 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Debug - show what was checked out
-        run: |
-          echo "当前分支: $(git branch --show-current)"
-          echo "当前 commit: $(git log -1 --format=%H)"
-          echo "文件列表:"
-          ls -la
-          echo "查找 release-config.yml:"
-          find . -name "release-config.yml"
-
       - name: Get repository list
         id: set-matrix
         run: |
-          # 尝试多个可能的位置
           if [ -f "release-config.yml" ]; then
             CONFIG_FILE="release-config.yml"
           elif [ -f "../release-config.yml" ]; then
@@ -53,11 +43,9 @@ jobs:
             CONFIG_FILE=".github/release-config.yml"
           else
             echo "ERROR: 找不到 release-config.yml"
-            find . -name "release-config.yml" -type f
             exit 1
           fi
           
-          echo "使用配置文件: $CONFIG_FILE"
           REPO_COUNT=$(yq e '.repositories | length' "$CONFIG_FILE")
           
           INDICES="["
@@ -92,7 +80,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
     runs-on: ubuntu-latest
-    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }}
+    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }} (${{ github.event.inputs.release_type }})
     
     steps:
       - name: Checkout config
@@ -103,7 +91,6 @@ jobs:
       - name: Load Configuration
         id: config
         run: |
-          # 找到配置文件
           if [ -f "release-config.yml" ]; then
             CONFIG_FILE="release-config.yml"
           elif [ -f "../release-config.yml" ]; then
@@ -163,23 +150,36 @@ jobs:
           VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-          
-          # 读取 changelog
-          if [ -f "changelog.lua" ]; then
-            sed -n "/\[\"$VERSION\"\] = {/,/},/p" changelog.lua | sed 's/^[[:space:]]*"//;s/",\?$//' > ../release_notes.md
-          else
-            echo "## What's Changed" > ../release_notes.md
-            echo "" >> ../release_notes.md
-            echo "_No changelog entries for this version._" >> ../release_notes.md
-          fi
-          
           echo "📌 版本: $VERSION"
+          
+          # 使用 Python 脚本提取更新日志
+          echo "## What's Changed" > ../release_notes.md
+          echo "" >> ../release_notes.md
+          python3 - "$VERSION" <<'PYEOF' >> ../release_notes.md
+import re, sys
+version = sys.argv[1]
+try:
+    with open("changelog.lua") as f:
+        content = f.read()
+    pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+    m = re.search(pattern, content, re.DOTALL)
+    if m:
+        block = m.group(1)
+        items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+        for item in items:
+            print(f"- {item}")
+    else:
+        print(f"_No changelog entries found for version {version}_")
+except FileNotFoundError:
+    print("_`changelog.lua` file not found_")
+PYEOF
 
       - name: Build plugin zip
         if: steps.config.outputs.skip != 'true'
         run: |
           cd repo
           mkdir -p dist
+          echo "📦 开始打包 ${{ steps.config.outputs.name }}.zip"
           zip -r dist/${{ steps.config.outputs.name }}.zip . \
             -x "*.git*" \
             -x ".github/*" \
@@ -187,7 +187,7 @@ jobs:
             -x "*.zip" \
             -x "picture/*" \
             -x "node_modules/*"
-          echo "📦 打包完成"
+          echo "✅ 打包完成"
 
       - name: Create Release
         if: steps.config.outputs.skip != 'true'
@@ -199,7 +199,6 @@ jobs:
           
           # 如果是 beta 版本，添加 beta 序号
           if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
-            # 获取最大的 beta 序号
             MAX_BETA=0
             for t in $(git tag -l "v${{ steps.version.outputs.version }}-beta.*"); do
               num=$(echo "$t" | grep -oP 'beta\.\K\d+')
@@ -209,14 +208,16 @@ jobs:
             done
             N=$((MAX_BETA + 1))
             TAG="v${{ steps.version.outputs.version }}-beta.$N"
+            echo "🏷️ Beta 版本 Tag: $TAG"
           fi
           
+          echo "🚀 正在创建 Release: $TAG"
           gh release create "$TAG" \
             dist/${{ steps.config.outputs.name }}.zip \
             --repo "${{ steps.config.outputs.repo_path }}" \
             --title "$TAG" \
             --notes-file ../release_notes.md \
             $([ "${{ steps.config.outputs.prerelease }}" = "true" ] && echo "--prerelease") \
-            || echo "Release may already exist, skipping"
+            || echo "⚠️ Release $TAG 可能已存在，跳过创建"
           
-          echo "🎉 Release 创建成功: $TAG"
+          echo "🎉 Release $TAG 处理完成"
