@@ -132,13 +132,13 @@ jobs:
           # 获取分支最后一次 commit 时间
           LAST_COMMIT_TIME=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date' 2>/dev/null || echo "")
           
-          # 获取最后一次 release 的创建时间（不是 commit 时间）
+          # 获取最后一次 release 的创建时间
           if [ "$PRERELEASE" = "true" ]; then
-            LAST_RELEASE_TIME=$(gh release list --repo "$REPO_PATH" --limit 20 --json createdAt,prerelease \
-              | jq -r '[.[] | select(.prerelease == true) | .createdAt][0]' 2>/dev/null || echo "")
+            LAST_RELEASE_TIME=$(gh release list --repo "$REPO_PATH" --limit 20 --json createdAt,isPrerelease \
+              | jq -r '[.[] | select(.isPrerelease == true) | .createdAt][0]' 2>/dev/null || echo "")
           else
-            LAST_RELEASE_TIME=$(gh release list --repo "$REPO_PATH" --limit 20 --json createdAt,prerelease \
-              | jq -r '[.[] | select(.prerelease == false) | .createdAt][0]' 2>/dev/null || echo "")
+            LAST_RELEASE_TIME=$(gh release list --repo "$REPO_PATH" --limit 20 --json createdAt,isPrerelease \
+              | jq -r '[.[] | select(.isPrerelease == false) | .createdAt][0]' 2>/dev/null || echo "")
           fi
           
           echo "分支: $BRANCH"
