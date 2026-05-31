@@ -115,6 +115,7 @@ jobs:
           fi
 
       - name: Sync Repository
+        id: sync
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
           GITEE_REPO_URL: ${{ steps.config.outputs.gitee_repo_url }}
@@ -191,10 +192,12 @@ jobs:
           # 检查是否有变化
           if git diff --cached --quiet; then
             echo "✨ 没有检测到任何文件变化，无需提交"
+            echo "has_changes=false" >> $GITHUB_OUTPUT
           else
             echo "📝 检测到变化，创建新提交..."
             git commit -m "Sync from Gitee ${GITEE_BRANCH} @ $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
             echo "✅ 提交成功 (分支: $(git branch --show-current))"
+            echo "has_changes=true" >> $GITHUB_OUTPUT
           fi
           
           echo "⬆️ 推送到 GitHub (分支: ${GITHUB_BRANCH})..."
@@ -205,3 +208,22 @@ jobs:
           
           echo "🎉 同步完成！"
           echo "📝 GitHub 上的原有提交记录已全部保留"
+
+      - name: Trigger release workflow
+        if: steps.sync.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          echo "🔔 检测到代码变化，触发 release 工作流..."
+          curl -X POST \
+            -H "Authorization: token $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            https://api.github.com/repos/gytwo/gitee-sync/actions/workflows/release.yml/dispatches \
+            -d '{
+              "ref": "main",
+              "inputs": {
+                "release_type": "beta",
+                "repo_filter": "${{ steps.config.outputs.sync_name }}"
+              }
+            }'
+          echo "✅ release 工作流已触发"
