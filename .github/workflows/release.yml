@@ -45,9 +45,9 @@ jobs:
             echo "ERROR: 找不到 release-config.yml"
             exit 1
           fi
-          
+
           REPO_COUNT=$(yq e '.repositories | length' "$CONFIG_FILE")
-          
+
           INDICES="["
           NAMES="["
           for ((i=0; i<$REPO_COUNT; i++)); do
@@ -67,7 +67,7 @@ jobs:
           done
           INDICES="${INDICES}]"
           NAMES="${NAMES}]"
-          
+
           echo "matrix={\"repository\":$INDICES}" >> $GITHUB_OUTPUT
           echo "repo_names=$NAMES" >> $GITHUB_OUTPUT
 
@@ -75,13 +75,13 @@ jobs:
     needs: prepare
     if: needs.prepare.outputs.matrix != '{"repository":[]}'
     strategy:
-      matrix: 
+      matrix:
         repository: ${{ fromJson(needs.prepare.outputs.matrix).repository }}
       max-parallel: 1
       fail-fast: false
     runs-on: ubuntu-latest
     name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }} (${{ github.event.inputs.release_type }})
-    
+
     steps:
       - name: Checkout config
         uses: actions/checkout@v6
@@ -101,28 +101,28 @@ jobs:
             echo "ERROR: 找不到 release-config.yml"
             exit 1
           fi
-          
+
           REPO_INDEX=${{ matrix.repository }}
           RELEASE_TYPE="${{ github.event.inputs.release_type }}"
-          
+
           NAME=$(yq e ".repositories[$REPO_INDEX].name" "$CONFIG_FILE")
           REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
           ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled" "$CONFIG_FILE")
-          
+
           if [ "$ENABLED" != "true" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "Repository $NAME ($RELEASE_TYPE) is disabled, skipping"
             exit 0
           fi
-          
+
           BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
           PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // true" "$CONFIG_FILE")
-          
+
           echo "name=$NAME" >> $GITHUB_OUTPUT
           echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
-          
+
           echo "📦 准备发布: $NAME"
           echo "🔖 分支: $BRANCH"
           echo "🏷️ 类型: $RELEASE_TYPE"
@@ -143,43 +143,33 @@ jobs:
           cd repo
           
           # 读取版本号
-          if [ ! -f "_meta.lua" ]; then
-            echo "ERROR: _meta.lua not found"
-            exit 1
-          fi
           VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-          echo "📌 版本: $VERSION"
           
-          # 使用 Python 脚本提取更新日志
-          echo "## What's Changed" > ../release_notes.md
-          echo "" >> ../release_notes.md
-          python3 - "$VERSION" <<'PYEOF' >> ../release_notes.md
-import re, sys
-version = sys.argv[1]
-try:
-    with open("changelog.lua") as f:
-        content = f.read()
-    pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-    m = re.search(pattern, content, re.DOTALL)
-    if m:
-        block = m.group(1)
-        items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-        for item in items:
-            print(f"- {item}")
-    else:
-        print(f"_No changelog entries found for version {version}_")
-except FileNotFoundError:
-    print("_`changelog.lua` file not found_")
-PYEOF
+          # 提取更新日志
+          python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
+          import re, sys
+          version = sys.argv[1]
+          with open("changelog.lua") as f:
+              content = f.read()
+          pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+          m = re.search(pattern, content, re.DOTALL)
+          if m:
+              block = m.group(1)
+              items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+              print("## What's Changed\n")
+              for item in items:
+                  print(f"- {item}")
+          else:
+              print("## What's Changed\n\n_No changelog entries for this version._")
+          PYEOF
 
       - name: Build plugin zip
         if: steps.config.outputs.skip != 'true'
         run: |
           cd repo
           mkdir -p dist
-          echo "📦 开始打包 ${{ steps.config.outputs.name }}.zip"
           zip -r dist/${{ steps.config.outputs.name }}.zip . \
             -x "*.git*" \
             -x ".github/*" \
@@ -195,7 +185,7 @@ PYEOF
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           cd repo
-          TAG="${{ steps.version.outputs.tag }}"
+          TAG="v${{ steps.version.outputs.version }}"
           
           # 如果是 beta 版本，添加 beta 序号
           if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
@@ -208,10 +198,8 @@ PYEOF
             done
             N=$((MAX_BETA + 1))
             TAG="v${{ steps.version.outputs.version }}-beta.$N"
-            echo "🏷️ Beta 版本 Tag: $TAG"
           fi
           
-          echo "🚀 正在创建 Release: $TAG"
           gh release create "$TAG" \
             dist/${{ steps.config.outputs.name }}.zip \
             --repo "${{ steps.config.outputs.repo_path }}" \
