@@ -63,7 +63,7 @@ repositories:
     github:
       repo_name: "ankimodel"
       branch: "sync"
-      private: true
+      private: false
 
 
   # 可以继续添加更多仓库配置...
