@@ -178,8 +178,16 @@ jobs:
           
           echo "📍 当前工作分支: $(git branch --show-current)"
           
-          # 用 git archive 导出 Gitee 代码（直接覆盖，不清空）
-          echo "📋 用 git archive 导出 Gitee 代码（不含 .git）..."
+          # 用 git archive 导出 Gitee 代码（先清空目标目录）
+          echo "📋 导出 Gitee 代码（不含 .git）..."
+          cd ../gitee_temp
+          
+          # 清空 GitHub 仓库中的所有文件（保留 .git 目录）
+          cd ../github_repo
+          echo "🧹 清空目标目录（准备完整同步）..."
+          find . -maxdepth 1 ! -name '.git' ! -name '.' ! -name '..' -exec rm -rf {} + 2>/dev/null || true
+          
+          # 解压 Gitee 代码到 GitHub 仓库
           cd ../gitee_temp
           git archive --format=tar HEAD | (cd ../github_repo && tar xf -)
           cd ../github_repo
@@ -210,7 +218,7 @@ jobs:
                   LAST_COMMIT_MSG="更新 $file"
                 fi
               else
-                LAST_COMMIT_MSG="更新 $file"
+                LAST_COMMIT_MSG="删除 $file"
               fi
               
               # 提交当前文件
