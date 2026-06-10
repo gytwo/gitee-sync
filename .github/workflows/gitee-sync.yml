@@ -192,9 +192,30 @@ jobs:
           if git diff --cached --quiet; then
             echo "✨ 没有检测到任何文件变化，无需提交"
           else
-            echo "📝 检测到变化，创建新提交..."
-            git commit -m "Sync from Gitee ${GITEE_BRANCH} @ $(TZ='Asia/Shanghai' date '+%Y-%m-%d %H:%M:%S')"
-            echo "✅ 提交成功 (分支: $(git branch --show-current))"
+            echo "📝 检测到变化，按文件分别提交..."
+            
+            # 获取变更的文件列表
+            CHANGED_FILES=$(git diff --cached --name-only)
+            
+            # 逐个文件提交
+            for file in $CHANGED_FILES; do
+              # 只添加当前文件
+              git reset HEAD > /dev/null 2>&1
+              git add "$file"
+              
+              # 获取该文件在 Gitee 中的最后一次提交注释
+              if [ -f "../gitee_temp/$file" ]; then
+                LAST_COMMIT_MSG=$(cd ../gitee_temp && git log -1 --format=%s -- "$file" 2>/dev/null || echo "更新 $file")
+              else
+                LAST_COMMIT_MSG="更新 $file"
+              fi
+              
+              # 提交当前文件
+              git commit -m "$LAST_COMMIT_MSG"
+              echo "✅ 已提交: $file -> $LAST_COMMIT_MSG"
+            done
+            
+            echo "✅ 所有文件提交成功 (分支: $(git branch --show-current))"
           fi
           
           echo "⬆️ 推送到 GitHub (分支: ${GITHUB_BRANCH})..."
