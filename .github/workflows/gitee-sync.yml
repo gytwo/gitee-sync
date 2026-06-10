@@ -129,9 +129,9 @@ jobs:
           git config --global user.name "gytwo"
           git config --global user.email "15279172411@163.com"
           
-          echo "📥 下载 Gitee 仓库的最终代码..."
+          echo "📥 下载 Gitee 仓库的完整代码（包含历史）..."
           GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
-          git clone --depth 1 -b "$GITEE_BRANCH" "$GITEE_AUTH_URL" gitee_temp
+          git clone -b "$GITEE_BRANCH" "$GITEE_AUTH_URL" gitee_temp
           
           if [ $? -ne 0 ]; then
             echo "❌ 下载 Gitee 代码失败"
@@ -205,7 +205,10 @@ jobs:
               
               # 获取该文件在 Gitee 中的最后一次提交注释
               if [ -f "../gitee_temp/$file" ]; then
-                LAST_COMMIT_MSG=$(cd ../gitee_temp && git log -1 --format=%s -- "$file" 2>/dev/null || echo "更新 $file")
+                LAST_COMMIT_MSG=$(cd ../gitee_temp && git log -1 --format=%s -- "$file" 2>/dev/null | head -1)
+                if [ -z "$LAST_COMMIT_MSG" ]; then
+                  LAST_COMMIT_MSG="更新 $file"
+                fi
               else
                 LAST_COMMIT_MSG="更新 $file"
               fi
