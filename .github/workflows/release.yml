@@ -37,25 +37,12 @@ jobs:
           INPUT_TARGET="${{ github.event.inputs.target }}"
           
           if [ -z "$INPUT_TARGET" ]; then
-            # 用户没选，全部运行
-            cat > targets.json << 'EOF'
-            [
-              {"name": "cloudlibrary.koplugin", "type": "beta"},
-              {"name": "cloudlibrary.koplugin", "type": "stable"},
-              {"name": "pinyin_enhancement.koplugin", "type": "beta"},
-              {"name": "pinyin_enhancement.koplugin", "type": "stable"}
-            ]
-            EOF
+            echo 'targets=[{"name":"cloudlibrary.koplugin","type":"beta"},{"name":"cloudlibrary.koplugin","type":"stable"},{"name":"pinyin_enhancement.koplugin","type":"beta"},{"name":"pinyin_enhancement.koplugin","type":"stable"}]' >> $GITHUB_OUTPUT
           else
-            # 用户选了，只运行选中的
             NAME=$(echo "$INPUT_TARGET" | sed 's/ (.*)//')
             TYPE=$(echo "$INPUT_TARGET" | sed 's/.*(\(.*\))/\1/')
-            cat > targets.json << EOF
-            [{"name": "$NAME", "type": "$TYPE"}]
-            EOF
+            echo "targets=[{\"name\":\"$NAME\",\"type\":\"$TYPE\"}]" >> $GITHUB_OUTPUT
           fi
-          
-          echo "targets=$(cat targets.json | jq -c .)" >> $GITHUB_OUTPUT
 
       - name: Run for each target
         env:
@@ -95,21 +82,45 @@ jobs:
             echo "🌿 分支: $BRANCH"
             echo "🏷️  预发布: $PRERELEASE"
             
-            # 检查是否有新提交
+            # 获取分支最后一次 commit 时间
             LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
+            LAST_COMMIT_TIME_BJ=$(date -d "$LAST_COMMIT_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
             
+            # 获取所有 releases 的详细信息
+            echo ""
+            echo "=== Releases 信息 ==="
+            gh api repos/$REPO_PATH/releases --jq '.[] | {tag_name: .tag_name, created_at: .created_at, published_at: .published_at, prerelease: .prerelease}'
+            
+            # 获取最后一次 release 的 published_at（发布时间）
             if [ "$PRERELEASE" = "true" ]; then
               LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .published_at][0]' 2>/dev/null || echo "")
             else
               LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .published_at][0]' 2>/dev/null || echo "")
             fi
             
-            if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "✅ 没有找到任何 release，将发布"
-            elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "✅ 检测到新的 commit，将发布"
+            if [ -n "$LAST_RELEASE_TIME_UTC" ]; then
+              LAST_RELEASE_TIME_BJ=$(date -d "$LAST_RELEASE_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
             else
-              echo "⏭️  没有新的 commit，跳过发布"
+              LAST_RELEASE_TIME_BJ="无"
+            fi
+            
+            echo ""
+            echo "=== 比较结果 ==="
+            echo "分支: $BRANCH"
+            echo "最后 commit 时间 (UTC): $LAST_COMMIT_TIME_UTC"
+            echo "最后 commit 时间 (北京时间): $LAST_COMMIT_TIME_BJ"
+            echo "最后 release published_at 时间 (UTC): $LAST_RELEASE_TIME_UTC"
+            echo "最后 release published_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
+            
+            if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
+              echo "has_changes=true"
+              echo "没有找到任何 release，将发布"
+            elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
+              echo "has_changes=true"
+              echo "检测到新的 commit (commit 时间 > release 发布时间)，将发布"
+            else
+              echo "has_changes=false"
+              echo "没有新的 commit (commit 时间 ≤ release 发布时间)，跳过发布"
               continue
             fi
             
@@ -158,25 +169,27 @@ jobs:
               -x "node_modules/*"
             
             # 生成 release notes
-            python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
-            import re, sys
-            version = sys.argv[1]
-            try:
-                with open("changelog.lua") as f:
-                    content = f.read()
-                pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-                m = re.search(pattern, content, re.DOTALL)
-                if m:
-                    block = m.group(1)
-                    items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-                    print("## What's Changed\n")
-                    for item in items:
-                        print(f"- {item}")
-                else:
-                    print("## What's Changed\n\n_No changelog entries for this version._")
-            except FileNotFoundError:
-                print("## What's Changed\n\n_`changelog.lua` file not found_")
-            PYEOF
+            VERSION_FOR_NOTES="$VERSION"
+            cat > ../build_release_notes.py << 'PYEOF'
+import re, sys
+version = sys.argv[1]
+try:
+    with open("changelog.lua") as f:
+        content = f.read()
+    pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+    m = re.search(pattern, content, re.DOTALL)
+    if m:
+        block = m.group(1)
+        items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+        print("## What's Changed\n")
+        for item in items:
+            print(f"- {item}")
+    else:
+        print("## What's Changed\n\n_No changelog entries for this version._")
+except FileNotFoundError:
+    print("## What's Changed\n\n_`changelog.lua` file not found_")
+PYEOF
+            python3 ../build_release_notes.py "$VERSION_FOR_NOTES" > ../release_notes.md
             
             # 创建 release
             if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
