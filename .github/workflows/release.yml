@@ -163,26 +163,27 @@ jobs:
               -x "picture/*" \
               -x "node_modules/*"
             
-            # 生成 release notes（使用原始版本的 here-document 格式）
-            python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
-            import re, sys
-            version = sys.argv[1]
-            try:
-                with open("changelog.lua") as f:
-                    content = f.read()
-                pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-                m = re.search(pattern, content, re.DOTALL)
-                if m:
-                    block = m.group(1)
-                    items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-                    print("## What's Changed\n")
-                    for item in items:
-                        print(f"- {item}")
-                else:
-                    print("## What's Changed\n\n_No changelog entries for this version._")
-            except FileNotFoundError:
-                print("## What's Changed\n\n_`changelog.lua` file not found_")
-            PYEOF
+            # 生成 release notes（使用 echo 和管道，避免 here-document 问题）
+            cat > ../build_notes.py << 'EOF'
+import re, sys
+version = sys.argv[1]
+try:
+    with open("changelog.lua") as f:
+        content = f.read()
+    pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+    m = re.search(pattern, content, re.DOTALL)
+    if m:
+        block = m.group(1)
+        items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+        print("## What's Changed\n")
+        for item in items:
+            print(f"- {item}")
+    else:
+        print("## What's Changed\n\n_No changelog entries for this version._")
+except FileNotFoundError:
+    print("## What's Changed\n\n_`changelog.lua` file not found_")
+EOF
+            python3 ../build_notes.py "$VERSION" > ../release_notes.md
             
             # 创建 release
             if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
@@ -199,6 +200,6 @@ jobs:
             fi
             
             cd ..
-            rm -rf repo
+            rm -rf repo ../build_notes.py ../release_notes.md
             echo "✅ 完成: $NAME ($RELEASE_TYPE)"
           done
