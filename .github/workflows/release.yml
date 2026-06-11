@@ -37,14 +37,27 @@ jobs:
           INPUT_TARGET="${{ github.event.inputs.target }}"
           
           if [ -z "$INPUT_TARGET" ]; then
-            echo 'targets=[{"name":"cloudlibrary.koplugin","type":"beta"},{"name":"cloudlibrary.koplugin","type":"stable"},{"name":"pinyin_enhancement.koplugin","type":"beta"},{"name":"pinyin_enhancement.koplugin","type":"stable"}]' >> $GITHUB_OUTPUT
+            # 用户没选，全部运行
+            cat > targets.json << 'EOF'
+            [
+              {"name": "cloudlibrary.koplugin", "type": "beta"},
+              {"name": "cloudlibrary.koplugin", "type": "stable"},
+              {"name": "pinyin_enhancement.koplugin", "type": "beta"},
+              {"name": "pinyin_enhancement.koplugin", "type": "stable"}
+            ]
+            EOF
           else
+            # 用户选了，只运行选中的
             NAME=$(echo "$INPUT_TARGET" | sed 's/ (.*)//')
             TYPE=$(echo "$INPUT_TARGET" | sed 's/.*(\(.*\))/\1/')
-            echo "targets=[{\"name\":\"$NAME\",\"type\":\"$TYPE\"}]" >> $GITHUB_OUTPUT
+            cat > targets.json << EOF
+            [{"name": "$NAME", "type": "$TYPE"}]
+            EOF
           fi
+          
+          echo "targets=$(cat targets.json | jq -c .)" >> $GITHUB_OUTPUT
 
-      - name: Run release
+      - name: Run for each target
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -58,8 +71,10 @@ jobs:
             echo "处理: $NAME ($RELEASE_TYPE)"
             echo "=========================================="
             
+            # 读取配置
             CONFIG_FILE="release-config.yml"
             
+            # 找到对应仓库的索引
             REPO_INDEX=$(yq e ".repositories | map(.name == \"$NAME\") | index(true)" "$CONFIG_FILE")
             if [ -z "$REPO_INDEX" ] || [ "$REPO_INDEX" = "null" ]; then
               echo "❌ 找不到仓库 $NAME"
@@ -80,6 +95,7 @@ jobs:
             echo "🌿 分支: $BRANCH"
             echo "🏷️  预发布: $PRERELEASE"
             
+            # 检查是否有新提交
             LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
             
             if [ "$PRERELEASE" = "true" ]; then
@@ -89,18 +105,20 @@ jobs:
             fi
             
             if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "没有找到任何 release，将发布"
+              echo "✅ 没有找到任何 release，将发布"
             elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "检测到新的 commit，将发布"
+              echo "✅ 检测到新的 commit，将发布"
             else
-              echo "没有新的 commit，跳过发布"
+              echo "⏭️  没有新的 commit，跳过发布"
               continue
             fi
             
+            # 检出仓库
             git clone "https://$GH_TOKEN@github.com/$REPO_PATH.git" repo
             cd repo
             git checkout "$BRANCH"
             
+            # 读取版本号
             VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
             if [[ -z "$VERSION" ]]; then
               echo "❌ 无法从 _meta.lua 提取版本号"
@@ -110,6 +128,7 @@ jobs:
             fi
             echo "📌 版本号: $VERSION"
             
+            # 处理 beta 标签
             if [ "$PRERELEASE" = "true" ]; then
               BASE="v${VERSION}"
               N=1
@@ -117,6 +136,9 @@ jobs:
                 N=$((N + 1))
               done
               BETA_TAG="${BASE}-beta.${N}"
+              echo "🔖 Beta 标签: $BETA_TAG"
+              
+              # 修改 _meta.lua 中的版本号
               sed -i "s/version = \"[^\"]*\"/version = \"${BETA_TAG}\"/" _meta.lua
               TAG="$BETA_TAG"
               PRERELEASE_FLAG="--prerelease"
@@ -125,6 +147,7 @@ jobs:
               PRERELEASE_FLAG=""
             fi
             
+            # 打包
             mkdir -p dist
             zip -r dist/${NAME}.zip . \
               -x "*.git*" \
@@ -134,39 +157,42 @@ jobs:
               -x "picture/*" \
               -x "node_modules/*"
             
-            # 生成 release notes - 使用 printf 避免 here-document 问题
-            printf 'import re, sys
+            # 生成 release notes
+            python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
+            import re, sys
             version = sys.argv[1]
             try:
                 with open("changelog.lua") as f:
                     content = f.read()
-                pattern = r'\"[\\[\"' + re.escape(version) + r'\"\\]\\s*=\\s*\\{([^}]+)\\}'
+                pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
                 m = re.search(pattern, content, re.DOTALL)
                 if m:
                     block = m.group(1)
-                    items = [a or b for a, b in re.findall(r'\"([^\"]+)\"|\\'([^\\']+)\\'', block)]
-                    print(\"## What's Changed\\n\")
+                    items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+                    print("## What's Changed\n")
                     for item in items:
-                        print(f\"- {item}\")
+                        print(f"- {item}")
                 else:
-                    print(\"## What's Changed\\n\\n_No changelog entries for this version._")
+                    print("## What's Changed\n\n_No changelog entries for this version._")
             except FileNotFoundError:
-                print(\"## What's Changed\\n\\n_`changelog.lua` file not found_\")
-            ' > ../build_notes.py
-                        python3 ../build_notes.py "$VERSION" > ../release_notes.md
+                print("## What's Changed\n\n_`changelog.lua` file not found_")
+            PYEOF
             
-                        if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
-              echo "⚠️ Release $TAG 已存在，跳过创建"
+            # 创建 release
+            if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
+              echo "⚠️  Release $TAG 已存在，跳过创建"
             else
+              echo "🚀 创建 Release: $TAG"
               gh release create "$TAG" \
                 dist/${NAME}.zip \
                 --repo "$REPO_PATH" \
                 --title "$TAG" \
                 --notes-file ../release_notes.md \
                 $PRERELEASE_FLAG
+              echo "✅ Release $TAG 创建成功"
             fi
             
             cd ..
-            rm -rf repo ../build_notes.py ../release_notes.md
+            rm -rf repo
             echo "✅ 完成: $NAME ($RELEASE_TYPE)"
-          done
+          done   检查这个版本跟原始版本的差异
