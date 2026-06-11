@@ -53,7 +53,7 @@ jobs:
               continue
             fi
             
-            if [ $i -eq 0 ]; then
+            if [ "$INDICES" = "[" ]; then
               INDICES="${INDICES}$i"
               NAMES="${NAMES}\"$NAME\""
             else
