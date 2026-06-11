@@ -29,7 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
-      repo_names: ${{ steps.set-matrix.outputs.repo_names }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -41,9 +40,9 @@ jobs:
           REPO_COUNT=$(yq e '.repositories | length' sync-config.yml)
           REPO_FILTER="${{ github.event.inputs.repo_name }}"
           
-          # 创建索引数组和名称数组
-          INDICES="["
-          NAMES="["
+          # 创建矩阵条目
+          MATRIX_ENTRIES=""
+          
           for ((i=0; i<$REPO_COUNT; i++)); do
             NAME=$(yq e ".repositories[$i].name" sync-config.yml)
             
@@ -53,30 +52,24 @@ jobs:
               continue
             fi
             
-            if [ "$INDICES" = "[" ]; then
-              INDICES="${INDICES}$i"
-              NAMES="${NAMES}\"$NAME\""
-            else
-              INDICES="${INDICES},$i"
-              NAMES="${NAMES},\"$NAME\""
+            if [ -n "$MATRIX_ENTRIES" ]; then
+              MATRIX_ENTRIES="$MATRIX_ENTRIES,"
             fi
+            MATRIX_ENTRIES="$MATRIX_ENTRIES{\"repository\":$i,\"name\":\"$NAME\"}"
+            echo "添加: $NAME"
           done
-          INDICES="${INDICES}]"
-          NAMES="${NAMES}]"
           
-          echo "matrix={\"repository\":$INDICES}" >> $GITHUB_OUTPUT
-          echo "repo_names=$NAMES" >> $GITHUB_OUTPUT
+          echo "matrix={\"include\":[$MATRIX_ENTRIES]}" >> $GITHUB_OUTPUT
 
   sync:
     needs: prepare
-    if: needs.prepare.outputs.matrix != '{"repository":[]}'
+    if: needs.prepare.outputs.matrix != '{"include":[]}'
     strategy:
-      matrix: 
-        repository: ${{ fromJson(needs.prepare.outputs.matrix).repository }}
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
       max-parallel: 1  # 避免分支名冲突
       fail-fast: false  # 某个仓库同步失败不影响其他仓库
     runs-on: ubuntu-latest
-    name: ${{ fromJson(needs.prepare.outputs.repo_names)[matrix.repository] }}
+    name: ${{ matrix.name }}
     
     steps:
       - name: Checkout code (for config)
