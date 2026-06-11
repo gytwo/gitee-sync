@@ -80,35 +80,13 @@ jobs:
             echo "🌿 分支: $BRANCH"
             echo "🏷️  预发布: $PRERELEASE"
             
-            # 获取分支最后一次 commit 时间
             LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
-            LAST_COMMIT_TIME_BJ=$(date -d "$LAST_COMMIT_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
             
-            # 获取所有 releases 的详细信息
-            echo ""
-            echo "=== Releases 信息 ==="
-            gh api repos/$REPO_PATH/releases --jq '.[] | {tag_name: .tag_name, created_at: .created_at, published_at: .published_at, prerelease: .prerelease}'
-            
-            # 获取最后一次 release 的 published_at（发布时间）
             if [ "$PRERELEASE" = "true" ]; then
               LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .published_at][0]' 2>/dev/null || echo "")
             else
               LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .published_at][0]' 2>/dev/null || echo "")
             fi
-            
-            if [ -n "$LAST_RELEASE_TIME_UTC" ]; then
-              LAST_RELEASE_TIME_BJ=$(date -d "$LAST_RELEASE_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
-            else
-              LAST_RELEASE_TIME_BJ="无"
-            fi
-            
-            echo ""
-            echo "=== 比较结果 ==="
-            echo "分支: $BRANCH"
-            echo "最后 commit 时间 (UTC): $LAST_COMMIT_TIME_UTC"
-            echo "最后 commit 时间 (北京时间): $LAST_COMMIT_TIME_BJ"
-            echo "最后 release published_at 时间 (UTC): $LAST_RELEASE_TIME_UTC"
-            echo "最后 release published_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
             
             if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
               echo "没有找到任何 release，将发布"
@@ -119,12 +97,10 @@ jobs:
               continue
             fi
             
-            # 检出仓库
             git clone "https://$GH_TOKEN@github.com/$REPO_PATH.git" repo
             cd repo
             git checkout "$BRANCH"
             
-            # 读取版本号
             VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
             if [[ -z "$VERSION" ]]; then
               echo "❌ 无法从 _meta.lua 提取版本号"
@@ -134,7 +110,6 @@ jobs:
             fi
             echo "📌 版本号: $VERSION"
             
-            # 处理 beta 标签
             if [ "$PRERELEASE" = "true" ]; then
               BASE="v${VERSION}"
               N=1
@@ -142,9 +117,6 @@ jobs:
                 N=$((N + 1))
               done
               BETA_TAG="${BASE}-beta.${N}"
-              echo "🔖 Beta 标签: $BETA_TAG"
-              
-              # 修改 _meta.lua 中的版本号
               sed -i "s/version = \"[^\"]*\"/version = \"${BETA_TAG}\"/" _meta.lua
               TAG="$BETA_TAG"
               PRERELEASE_FLAG="--prerelease"
@@ -153,7 +125,6 @@ jobs:
               PRERELEASE_FLAG=""
             fi
             
-            # 打包
             mkdir -p dist
             zip -r dist/${NAME}.zip . \
               -x "*.git*" \
@@ -163,40 +134,36 @@ jobs:
               -x "picture/*" \
               -x "node_modules/*"
             
-            # 生成 release notes（使用 echo 和管道，避免 here-document 问题）
-            cat > ../build_notes.py << 'EOF'
-            import re, sys
+            # 生成 release notes - 使用 printf 避免 here-document 问题
+            printf 'import re, sys
             version = sys.argv[1]
             try:
                 with open("changelog.lua") as f:
                     content = f.read()
-                pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+                pattern = r'\"[\\[\"' + re.escape(version) + r'\"\\]\\s*=\\s*\\{([^}]+)\\}'
                 m = re.search(pattern, content, re.DOTALL)
                 if m:
                     block = m.group(1)
-                    items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-                    print("## What's Changed\n")
+                    items = [a or b for a, b in re.findall(r'\"([^\"]+)\"|\\'([^\\']+)\\'', block)]
+                    print(\"## What's Changed\\n\")
                     for item in items:
-                        print(f"- {item}")
+                        print(f\"- {item}\")
                 else:
-                    print("## What's Changed\n\n_No changelog entries for this version._")
+                    print(\"## What's Changed\\n\\n_No changelog entries for this version._")
             except FileNotFoundError:
-                print("## What's Changed\n\n_`changelog.lua` file not found_")
-            EOF
+                print(\"## What's Changed\\n\\n_`changelog.lua` file not found_\")
+            ' > ../build_notes.py
                         python3 ../build_notes.py "$VERSION" > ../release_notes.md
             
-            # 创建 release
-            if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
-              echo "⚠️  Release $TAG 已存在，跳过创建"
+                        if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
+              echo "⚠️ Release $TAG 已存在，跳过创建"
             else
-              echo "🚀 创建 Release: $TAG"
               gh release create "$TAG" \
                 dist/${NAME}.zip \
                 --repo "$REPO_PATH" \
                 --title "$TAG" \
                 --notes-file ../release_notes.md \
                 $PRERELEASE_FLAG
-              echo "✅ Release $TAG 创建成功"
             fi
             
             cd ..
