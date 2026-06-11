@@ -57,13 +57,11 @@ jobs:
           for ((i=0; i<$REPO_COUNT; i++)); do
             NAME=$(yq e ".repositories[$i].name" "$CONFIG_FILE")
             
-            # 仓库名过滤
             if [ -n "$REPO_FILTER" ] && [ "$NAME" != "$REPO_FILTER" ]; then
               echo "Skipping $NAME (filter: $REPO_FILTER)"
               continue
             fi
             
-            # 确定要运行的 release_type
             if [ -n "$RELEASE_TYPE_FILTER" ]; then
               RELEASE_TYPES=("$RELEASE_TYPE_FILTER")
             else
@@ -76,7 +74,7 @@ jobs:
                 if [ -n "$MATRIX_ENTRIES" ]; then
                   MATRIX_ENTRIES="$MATRIX_ENTRIES,"
                 fi
-                MATRIX_ENTRIES="$MATRIX_ENTRIES{\"repository\":$i,\"release_type\":\"$release_type\"}"
+                MATRIX_ENTRIES="$MATRIX_ENTRIES{\"repository\":$i,\"release_type\":\"$release_type\",\"name\":\"$NAME\"}"
                 echo "添加: $NAME ($release_type)"
               else
                 echo "跳过: $NAME ($release_type) 未启用"
@@ -94,7 +92,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
     runs-on: ubuntu-latest
-    name: ${{ matrix.repository }} (${{ matrix.release_type }})
+    name: ${{ matrix.name }} (${{ matrix.release_type }})
 
     steps:
       - name: Checkout config
