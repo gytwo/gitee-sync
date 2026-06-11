@@ -4,6 +4,20 @@ env:
 
 on:
   workflow_dispatch:  # 支持手动触发
+    inputs:
+      repo_name:
+        description: 'Repository name (leave empty for all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - kopatches-sync
+          - cloudlibrary.koplugin-sync
+          - pinyin_enhancement.koplugin-sync
+          - zen_ui_mod.koplugin-sync
+          - simpleui.koplugin-sync
+          - ankimodel-sync
   schedule:
     # 每月2000分钟免费额度，可以根据执行时长调整频率。
     # 在东八区的 14:00, 22:00, 23:00, 24:00 运行
@@ -25,12 +39,20 @@ jobs:
         run: |
           # 获取仓库数量
           REPO_COUNT=$(yq e '.repositories | length' sync-config.yml)
+          REPO_FILTER="${{ github.event.inputs.repo_name }}"
           
           # 创建索引数组和名称数组
           INDICES="["
           NAMES="["
           for ((i=0; i<$REPO_COUNT; i++)); do
             NAME=$(yq e ".repositories[$i].name" sync-config.yml)
+            
+            # 仓库名过滤
+            if [ -n "$REPO_FILTER" ] && [ "$NAME" != "$REPO_FILTER" ]; then
+              echo "Skipping $NAME (filter: $REPO_FILTER)"
+              continue
+            fi
+            
             if [ $i -eq 0 ]; then
               INDICES="${INDICES}$i"
               NAMES="${NAMES}\"$NAME\""
@@ -47,6 +69,7 @@ jobs:
 
   sync:
     needs: prepare
+    if: needs.prepare.outputs.matrix != '{"repository":[]}'
     strategy:
       matrix: 
         repository: ${{ fromJson(needs.prepare.outputs.matrix).repository }}
