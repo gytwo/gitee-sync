@@ -44,7 +44,7 @@ jobs:
             echo "targets=[{\"name\":\"$NAME\",\"type\":\"$TYPE\"}]" >> $GITHUB_OUTPUT
           fi
 
-      - name: Run for each target
+      - name: Run release
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -58,10 +58,8 @@ jobs:
             echo "处理: $NAME ($RELEASE_TYPE)"
             echo "=========================================="
             
-            # 读取配置
             CONFIG_FILE="release-config.yml"
             
-            # 找到对应仓库的索引
             REPO_INDEX=$(yq e ".repositories | map(.name == \"$NAME\") | index(true)" "$CONFIG_FILE")
             if [ -z "$REPO_INDEX" ] || [ "$REPO_INDEX" = "null" ]; then
               echo "❌ 找不到仓库 $NAME"
@@ -113,14 +111,11 @@ jobs:
             echo "最后 release published_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
             
             if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "has_changes=true"
               echo "没有找到任何 release，将发布"
             elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "has_changes=true"
-              echo "检测到新的 commit (commit 时间 > release 发布时间)，将发布"
+              echo "检测到新的 commit，将发布"
             else
-              echo "has_changes=false"
-              echo "没有新的 commit (commit 时间 ≤ release 发布时间)，跳过发布"
+              echo "没有新的 commit，跳过发布"
               continue
             fi
             
@@ -168,28 +163,26 @@ jobs:
               -x "picture/*" \
               -x "node_modules/*"
             
-            # 生成 release notes
-            VERSION_FOR_NOTES="$VERSION"
-            cat > ../build_release_notes.py << 'PYEOF'
-import re, sys
-version = sys.argv[1]
-try:
-    with open("changelog.lua") as f:
-        content = f.read()
-    pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-    m = re.search(pattern, content, re.DOTALL)
-    if m:
-        block = m.group(1)
-        items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-        print("## What's Changed\n")
-        for item in items:
-            print(f"- {item}")
-    else:
-        print("## What's Changed\n\n_No changelog entries for this version._")
-except FileNotFoundError:
-    print("## What's Changed\n\n_`changelog.lua` file not found_")
-PYEOF
-            python3 ../build_release_notes.py "$VERSION_FOR_NOTES" > ../release_notes.md
+            # 生成 release notes（使用原始版本的 here-document 格式）
+            python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
+            import re, sys
+            version = sys.argv[1]
+            try:
+                with open("changelog.lua") as f:
+                    content = f.read()
+                pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+                m = re.search(pattern, content, re.DOTALL)
+                if m:
+                    block = m.group(1)
+                    items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+                    print("## What's Changed\n")
+                    for item in items:
+                        print(f"- {item}")
+                else:
+                    print("## What's Changed\n\n_No changelog entries for this version._")
+            except FileNotFoundError:
+                print("## What's Changed\n\n_`changelog.lua` file not found_")
+            PYEOF
             
             # 创建 release
             if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
