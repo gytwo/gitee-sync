@@ -5,194 +5,280 @@ on:
     - cron: '30 */6 * * *'
   workflow_dispatch:
     inputs:
-      target:
-        description: 'Select repository and release type (leave empty for all)'
+      release_type:
+        description: 'Release type'
         required: false
         default: ''
         type: choice
         options:
           - ''
-          - cloudlibrary.koplugin (beta)
-          - cloudlibrary.koplugin (stable)
-          - pinyin_enhancement.koplugin (beta)
-          - pinyin_enhancement.koplugin (stable)
+          - beta
+          - stable
+      repo_name:
+        description: 'Repository name (leave empty for all)'
+        required: false
+        default: ''
+        type: choice
+        options:
+          - ''
+          - cloudlibrary.koplugin
+          - pinyin_enhancement.koplugin
 
 permissions:
   contents: write
 
 jobs:
-  release:
+  prepare:
     runs-on: ubuntu-latest
-    name: ${{ github.event.inputs.target || 'All repositories' }}
-    
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Generate dynamic matrix
+        id: set-matrix
+        run: |
+          if [ -f "release-config.yml" ]; then
+            CONFIG_FILE="release-config.yml"
+          else
+            echo "ERROR: 找不到 release-config.yml"
+            exit 1
+          fi
+
+          REPO_COUNT=$(yq e '.repositories | length' "$CONFIG_FILE")
+          REPO_FILTER="${{ github.event.inputs.repo_name }}"
+          RELEASE_TYPE_FILTER="${{ github.event.inputs.release_type }}"
+
+          MATRIX_ENTRIES="[]"
+
+          for ((i=0; i<$REPO_COUNT; i++)); do
+            NAME=$(yq e ".repositories[$i].name" "$CONFIG_FILE")
+            
+            # 仓库名过滤
+            if [ -n "$REPO_FILTER" ] && [ "$NAME" != "$REPO_FILTER" ]; then
+              echo "Skipping $NAME (filter: $REPO_FILTER)"
+              continue
+            fi
+            
+            # 确定要运行的 release_type
+            if [ -n "$RELEASE_TYPE_FILTER" ]; then
+              RELEASE_TYPES=("$RELEASE_TYPE_FILTER")
+            else
+              RELEASE_TYPES=("beta" "stable")
+            fi
+            
+            for release_type in "${RELEASE_TYPES[@]}"; do
+              ENABLED=$(yq e ".repositories[$i].release.$release_type.enabled // false" "$CONFIG_FILE")
+              if [ "$ENABLED" = "true" ]; then
+                MATRIX_ENTRIES=$(echo "$MATRIX_ENTRIES" | jq ". += [{\"repository\": $i, \"release_type\": \"$release_type\"}]")
+                echo "添加: $NAME ($release_type)"
+              else
+                echo "跳过: $NAME ($release_type) 未启用"
+              fi
+            done
+          done
+
+          echo "matrix={\"include\":$MATRIX_ENTRIES}" >> $GITHUB_OUTPUT
+
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.matrix != '{"include":[]}'
+    strategy:
+      matrix: ${{ fromJson(needs.prepare.outputs.matrix) }}
+      max-parallel: 1
+      fail-fast: false
+    runs-on: ubuntu-latest
+    name: ${{ fromJson(needs.prepare.outputs.matrix).include[0].name }}  # 这里需要从 config 读取
+
     steps:
       - name: Checkout config
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Get targets list
-        id: targets
+      - name: Load Configuration
+        id: config
         run: |
-          INPUT_TARGET="${{ github.event.inputs.target }}"
-          
-          if [ -z "$INPUT_TARGET" ]; then
-            # 用户没选，全部运行
-            cat > targets.json << 'EOF'
-            [
-              {"name": "cloudlibrary.koplugin", "type": "beta"},
-              {"name": "cloudlibrary.koplugin", "type": "stable"},
-              {"name": "pinyin_enhancement.koplugin", "type": "beta"},
-              {"name": "pinyin_enhancement.koplugin", "type": "stable"}
-            ]
-            EOF
+          if [ -f "release-config.yml" ]; then
+            CONFIG_FILE="release-config.yml"
           else
-            # 用户选了，只运行选中的
-            NAME=$(echo "$INPUT_TARGET" | sed 's/ (.*)//')
-            TYPE=$(echo "$INPUT_TARGET" | sed 's/.*(\(.*\))/\1/')
-            cat > targets.json << EOF
-            [{"name": "$NAME", "type": "$TYPE"}]
-            EOF
+            echo "ERROR: 找不到 release-config.yml"
+            exit 1
           fi
-          
-          echo "targets=$(cat targets.json | jq -c .)" >> $GITHUB_OUTPUT
 
-      - name: Run for each target
+          REPO_INDEX=${{ matrix.repository }}
+          RELEASE_TYPE="${{ matrix.release_type }}"
+
+          NAME=$(yq e ".repositories[$REPO_INDEX].name" "$CONFIG_FILE")
+          REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
+          BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
+          ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled" "$CONFIG_FILE")
+          PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // false" "$CONFIG_FILE")
+
+          if [ "$ENABLED" != "true" ]; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Repository $NAME ($RELEASE_TYPE) is disabled, skipping"
+            exit 0
+          fi
+
+          echo "name=$NAME" >> $GITHUB_OUTPUT
+          echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+
+      - name: Check for changes
+        if: steps.config.outputs.skip != 'true'
+        id: check
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          TARGETS='${{ steps.targets.outputs.targets }}'
-          echo "$TARGETS" | jq -c '.[]' | while read item; do
-            NAME=$(echo "$item" | jq -r '.name')
-            RELEASE_TYPE=$(echo "$item" | jq -r '.type')
-            
-            echo ""
-            echo "=========================================="
-            echo "处理: $NAME ($RELEASE_TYPE)"
-            echo "=========================================="
-            
-            # 读取配置
-            CONFIG_FILE="release-config.yml"
-            
-            # 找到对应仓库的索引
-            REPO_INDEX=$(yq e ".repositories | map(.name == \"$NAME\") | index(true)" "$CONFIG_FILE")
-            if [ -z "$REPO_INDEX" ] || [ "$REPO_INDEX" = "null" ]; then
-              echo "❌ 找不到仓库 $NAME"
-              continue
-            fi
-            
-            REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
-            BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
-            ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled" "$CONFIG_FILE")
-            PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // false" "$CONFIG_FILE")
-            
-            if [ "$ENABLED" != "true" ]; then
-              echo "⏭️  $NAME ($RELEASE_TYPE) 已禁用，跳过"
-              continue
-            fi
-            
-            echo "📦 仓库: $REPO_PATH"
-            echo "🌿 分支: $BRANCH"
-            echo "🏷️  预发布: $PRERELEASE"
-            
-            # 检查是否有新提交
-            LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
-            
-            if [ "$PRERELEASE" = "true" ]; then
-              LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .published_at][0]' 2>/dev/null || echo "")
-            else
-              LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .published_at][0]' 2>/dev/null || echo "")
-            fi
-            
-            if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "✅ 没有找到任何 release，将发布"
-            elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
-              echo "✅ 检测到新的 commit，将发布"
-            else
-              echo "⏭️  没有新的 commit，跳过发布"
-              continue
-            fi
-            
-            # 检出仓库
-            git clone "https://$GH_TOKEN@github.com/$REPO_PATH.git" repo
-            cd repo
-            git checkout "$BRANCH"
-            
-            # 读取版本号
-            VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
-            if [[ -z "$VERSION" ]]; then
-              echo "❌ 无法从 _meta.lua 提取版本号"
-              cd ..
-              rm -rf repo
-              continue
-            fi
-            echo "📌 版本号: $VERSION"
-            
-            # 处理 beta 标签
-            if [ "$PRERELEASE" = "true" ]; then
-              BASE="v${VERSION}"
-              N=1
-              while gh release view "${BASE}-beta.${N}" --repo "$REPO_PATH" > /dev/null 2>&1; do
-                N=$((N + 1))
-              done
-              BETA_TAG="${BASE}-beta.${N}"
-              echo "🔖 Beta 标签: $BETA_TAG"
-              
-              # 修改 _meta.lua 中的版本号
-              sed -i "s/version = \"[^\"]*\"/version = \"${BETA_TAG}\"/" _meta.lua
-              TAG="$BETA_TAG"
-              PRERELEASE_FLAG="--prerelease"
-            else
-              TAG="v${VERSION}"
-              PRERELEASE_FLAG=""
-            fi
-            
-            # 打包
-            mkdir -p dist
-            zip -r dist/${NAME}.zip . \
-              -x "*.git*" \
-              -x ".github/*" \
-              -x "dist/*" \
-              -x "*.zip" \
-              -x "picture/*" \
-              -x "node_modules/*"
-            
-            # 生成 release notes
-            python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
-            import re, sys
-            version = sys.argv[1]
-            try:
-                with open("changelog.lua") as f:
-                    content = f.read()
-                pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-                m = re.search(pattern, content, re.DOTALL)
-                if m:
-                    block = m.group(1)
-                    items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-                    print("## What's Changed\n")
-                    for item in items:
-                        print(f"- {item}")
-                else:
-                    print("## What's Changed\n\n_No changelog entries for this version._")
-            except FileNotFoundError:
-                print("## What's Changed\n\n_`changelog.lua` file not found_")
-            PYEOF
-            
-            # 创建 release
-            if gh release view "$TAG" --repo "$REPO_PATH" > /dev/null 2>&1; then
-              echo "⚠️  Release $TAG 已存在，跳过创建"
-            else
-              echo "🚀 创建 Release: $TAG"
-              gh release create "$TAG" \
-                dist/${NAME}.zip \
-                --repo "$REPO_PATH" \
-                --title "$TAG" \
-                --notes-file ../release_notes.md \
-                $PRERELEASE_FLAG
-              echo "✅ Release $TAG 创建成功"
-            fi
-            
-            cd ..
-            rm -rf repo
-            echo "✅ 完成: $NAME ($RELEASE_TYPE)"
-          done   检查这个版本跟原始版本的差异
+          REPO_PATH="${{ steps.config.outputs.repo_path }}"
+          BRANCH="${{ steps.config.outputs.branch }}"
+          PRERELEASE="${{ steps.config.outputs.prerelease }}"
+          
+          LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
+          LAST_COMMIT_TIME_BJ=$(date -d "$LAST_COMMIT_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
+          
+          echo ""
+          echo "=== Releases 信息 ==="
+          gh api repos/$REPO_PATH/releases --jq '.[] | {tag_name: .tag_name, created_at: .created_at, published_at: .published_at, prerelease: .prerelease}'
+          
+          if [ "$PRERELEASE" = "true" ]; then
+            LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .published_at][0]' 2>/dev/null || echo "")
+          else
+            LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .published_at][0]' 2>/dev/null || echo "")
+          fi
+          
+          if [ -n "$LAST_RELEASE_TIME_UTC" ]; then
+            LAST_RELEASE_TIME_BJ=$(date -d "$LAST_RELEASE_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
+          else
+            LAST_RELEASE_TIME_BJ="无"
+          fi
+          
+          echo ""
+          echo "=== 比较结果 ==="
+          echo "分支: $BRANCH"
+          echo "最后 commit 时间 (UTC): $LAST_COMMIT_TIME_UTC"
+          echo "最后 commit 时间 (北京时间): $LAST_COMMIT_TIME_BJ"
+          echo "最后 release published_at 时间 (UTC): $LAST_RELEASE_TIME_UTC"
+          echo "最后 release published_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
+          
+          if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "没有找到任何 release，将发布"
+          elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
+            echo "has_changes=true" >> $GITHUB_OUTPUT
+            echo "检测到新的 commit (commit 时间 > release 发布时间)，将发布"
+          else
+            echo "has_changes=false" >> $GITHUB_OUTPUT
+            echo "没有新的 commit (commit 时间 ≤ release 发布时间)，跳过发布"
+          fi
+
+      - name: Checkout repository
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: ${{ steps.config.outputs.repo_path }}
+          ref: ${{ steps.config.outputs.branch }}
+          path: repo
+          fetch-depth: 0
+
+      - name: Read version from _meta.lua
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
+        id: meta
+        run: |
+          cd repo
+          VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
+          if [[ -z "$VERSION" ]]; then
+            echo "Error: could not extract version from _meta.lua" >&2
+            exit 1
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Resolve beta tag
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true' && steps.config.outputs.prerelease == 'true'
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          cd repo
+          META_VERSION="${{ steps.meta.outputs.version }}"
+          BASE="v${META_VERSION}"
+
+          N=1
+          while gh release view "${BASE}-beta.${N}" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; do
+            N=$((N + 1))
+          done
+          BETA_TAG="${BASE}-beta.${N}"
+          echo "tag=$BETA_TAG" >> $GITHUB_OUTPUT
+          
+          sed -i "s/version = \"[^\"]*\"/version = \"${BETA_TAG}\"/" _meta.lua
+
+      - name: Build plugin zip
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
+        run: |
+          cd repo
+          mkdir -p dist
+          zip -r dist/${{ steps.config.outputs.name }}.zip . \
+            -x "*.git*" \
+            -x ".github/*" \
+            -x "dist/*" \
+            -x "*.zip" \
+            -x "picture/*" \
+            -x "node_modules/*"
+
+      - name: Build release notes
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
+        run: |
+          cd repo
+          VERSION="${{ steps.meta.outputs.version }}"
+          python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
+          import re, sys
+          version = sys.argv[1]
+          try:
+              with open("changelog.lua") as f:
+                  content = f.read()
+              pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
+              m = re.search(pattern, content, re.DOTALL)
+              if m:
+                  block = m.group(1)
+                  items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
+                  print("## What's Changed\n")
+                  for item in items:
+                      print(f"- {item}")
+              else:
+                  print("## What's Changed\n\n_No changelog entries for this version._")
+          except FileNotFoundError:
+              print("## What's Changed\n\n_`changelog.lua` file not found_")
+          PYEOF
+
+      - name: Create Release
+        if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          cd repo
+          if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
+            TAG="${{ steps.tag.outputs.tag }}"
+            PRERELEASE_FLAG="--prerelease"
+          else
+            TAG="${{ steps.meta.outputs.tag }}"
+            PRERELEASE_FLAG=""
+          fi
+          
+          if gh release view "$TAG" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; then
+            echo "⚠️ Release $TAG 已存在，跳过创建"
+          else
+            echo "🚀 创建新的 Release: $TAG"
+            gh release create "$TAG" \
+              dist/${{ steps.config.outputs.name }}.zip \
+              --repo "${{ steps.config.outputs.repo_path }}" \
+              --title "$TAG" \
+              --notes-file ../release_notes.md \
+              $PRERELEASE_FLAG
+            echo "🎉 Release $TAG 创建成功"
+          fi
