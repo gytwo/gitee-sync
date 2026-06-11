@@ -52,7 +52,7 @@ jobs:
           REPO_FILTER="${{ github.event.inputs.repo_name }}"
           RELEASE_TYPE_FILTER="${{ github.event.inputs.release_type }}"
 
-          MATRIX_ENTRIES="[]"
+          MATRIX_ENTRIES=""
 
           for ((i=0; i<$REPO_COUNT; i++)); do
             NAME=$(yq e ".repositories[$i].name" "$CONFIG_FILE")
@@ -73,7 +73,10 @@ jobs:
             for release_type in "${RELEASE_TYPES[@]}"; do
               ENABLED=$(yq e ".repositories[$i].release.$release_type.enabled // false" "$CONFIG_FILE")
               if [ "$ENABLED" = "true" ]; then
-                MATRIX_ENTRIES=$(echo "$MATRIX_ENTRIES" | jq ". += [{\"repository\": $i, \"release_type\": \"$release_type\"}]")
+                if [ -n "$MATRIX_ENTRIES" ]; then
+                  MATRIX_ENTRIES="$MATRIX_ENTRIES,"
+                fi
+                MATRIX_ENTRIES="$MATRIX_ENTRIES{\"repository\":$i,\"release_type\":\"$release_type\"}"
                 echo "添加: $NAME ($release_type)"
               else
                 echo "跳过: $NAME ($release_type) 未启用"
@@ -81,7 +84,7 @@ jobs:
             done
           done
 
-          echo "matrix={\"include\":$MATRIX_ENTRIES}" >> $GITHUB_OUTPUT
+          echo "matrix={\"include\":[$MATRIX_ENTRIES]}" >> $GITHUB_OUTPUT
 
   release:
     needs: prepare
@@ -91,7 +94,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
     runs-on: ubuntu-latest
-    name: ${{ fromJson(needs.prepare.outputs.matrix).include[0].name }}  # 这里需要从 config 读取
+    name: ${{ matrix.repository }} (${{ matrix.release_type }})
 
     steps:
       - name: Checkout config
