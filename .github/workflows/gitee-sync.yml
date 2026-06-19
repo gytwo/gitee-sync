@@ -210,28 +210,43 @@ jobs:
           else
             echo "📝 检测到变化，按文件分别提交..."
             
-            # 获取变更的文件列表
-            CHANGED_FILES=$(git diff --cached --name-only)
-            
-            # 逐个文件提交
-            for file in $CHANGED_FILES; do
-              # 只添加当前文件
-              git reset HEAD > /dev/null 2>&1
-              git add "$file"
+            # 使用 while read 正确处理包含空格的文件名
+            git diff --cached --name-only | while IFS= read -r file; do
+              # 跳过空行
+              [ -z "$file" ] && continue
               
-              # 获取该文件在 Gitee 中的最后一次提交注释
-              if [ -f "../gitee_temp/$file" ]; then
-                LAST_COMMIT_MSG=$(cd ../gitee_temp && git log -1 --format=%s -- "$file" 2>/dev/null | head -1)
-                if [ -z "$LAST_COMMIT_MSG" ]; then
-                  LAST_COMMIT_MSG="更新 $file"
-                fi
-              else
-                LAST_COMMIT_MSG="更新 $file"
+              echo "处理文件: '$file'"
+              
+              # 重置暂存区
+              git reset HEAD > /dev/null 2>&1
+              
+              # 添加当前文件（使用 -- 防止参数解析问题）
+              git add -- "$file" 2>/dev/null
+              
+              # 检查添加是否成功
+              if [ $? -ne 0 ]; then
+                echo "⚠️ 警告: 无法添加文件 '$file'，跳过"
+                continue
               fi
               
-              # 提交当前文件
-              git commit -m "$LAST_COMMIT_MSG"
-              echo "✅ 已提交: $file -> $LAST_COMMIT_MSG"
+              # 检查是否有可提交的内容
+              if ! git diff --cached --quiet; then
+                # 获取该文件在 Gitee 中的最后一次提交注释
+                if [ -f "../gitee_temp/$file" ]; then
+                  LAST_COMMIT_MSG=$(cd ../gitee_temp && git log -1 --format=%s -- "$file" 2>/dev/null | head -1)
+                  if [ -z "$LAST_COMMIT_MSG" ]; then
+                    LAST_COMMIT_MSG="更新 $file"
+                  fi
+                else
+                  LAST_COMMIT_MSG="更新 $file"
+                fi
+                
+                # 提交当前文件
+                git commit -m "$LAST_COMMIT_MSG"
+                echo "✅ 已提交: '$file' -> $LAST_COMMIT_MSG"
+              else
+                echo "ℹ️ 跳过: '$file' 无实际变更"
+              fi
             done
             
             echo "✅ 所有文件提交成功 (分支: $(git branch --show-current))"
