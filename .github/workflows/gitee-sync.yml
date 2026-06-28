@@ -210,8 +210,8 @@ jobs:
           else
             echo "📝 检测到变化，按文件分别提交..."
             
-            # 使用 while read 正确处理包含空格的文件名
-            git diff --cached --name-only | while IFS= read -r file; do
+            # 使用 -z 选项正确处理包含空格和特殊字符的文件名
+            git diff --cached --name-only -z | while IFS= read -r -d '' file; do
               # 跳过空行
               [ -z "$file" ] && continue
               
