@@ -23,6 +23,7 @@ on:
           - ''
           - cloudlibrary.koplugin
           - pinyin_enhancement.koplugin
+          - quickui.koplugin
 
 permissions:
   contents: write
