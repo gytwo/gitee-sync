@@ -231,6 +231,7 @@ jobs:
             -x "dist/*" \
             -x "*.zip" \
             -x "picture/*" \
+            -x "pictures/*" \
             -x "node_modules/*"
 
       - name: Build release notes
