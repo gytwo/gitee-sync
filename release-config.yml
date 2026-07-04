@@ -31,3 +31,19 @@ repositories:
         prerelease: false
         version_source: "_meta.lua"
         changelog_source: "changelog.lua"
+
+  - name: "quickui.koplugin"
+    path: "gytwo/quickui.koplugin"
+    release:
+      beta:
+        enabled: true
+        branch: "sync"
+        prerelease: true
+        version_source: "_meta.lua"
+        changelog_source: "changelog.lua"
+      stable:
+        enabled: true
+        branch: "main"
+        prerelease: false
+        version_source: "_meta.lua"
+        changelog_source: "changelog.lua"
