@@ -15,6 +15,7 @@ on:
           - kopatches-sync
           - cloudlibrary.koplugin-sync
           - pinyin_enhancement.koplugin-sync
+          - quickui-sync
           - zen_ui_mod.koplugin-sync
           - simpleui.koplugin-sync
           - ankimodel-sync
