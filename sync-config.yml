@@ -70,19 +70,6 @@ repositories:
       # 是否为私有仓库
       private: false
 
-  - name: "simpleui.koplugin-sync"  # 示例：同步一个主分支的项目
-    gitee:
-      # Gitee 仓库完整地址
-      repo_url: "https://gitee.com/gytwo/simpleui.koplugin.git"
-      # 要同步的源分支
-      branch: "sync"
-    github:
-      # GitHub 目标仓库名称
-      repo_name: "simpleui.koplugin"
-      # GitHub 目标分支名称（可选，默认与 Gitee 分支相同）
-      branch: "sync"
-      # 是否为私有仓库
-      private: false
 
   - name: "ankimodel-sync"  # 示例：同步一个开发分支的私有项目
     gitee:
