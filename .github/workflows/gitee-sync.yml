@@ -17,7 +17,6 @@ on:
           - pinyin_enhancement.koplugin-sync
           - quickui.koplugin-sync
           - zen_ui_mod.koplugin-sync
-          - simpleui.koplugin-sync
           - ankimodel-sync
   schedule:
     # 每月2000分钟免费额度，可以根据执行时长调整频率。
