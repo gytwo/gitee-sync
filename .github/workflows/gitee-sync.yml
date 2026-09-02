@@ -139,14 +139,14 @@ jobs:
           GITHUB_BRANCH: ${{ steps.config.outputs.github_branch }}
           GITHUB_USER: ${{ github.repository_owner }}
           GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
-          GITEE_PASSWORD: ${{ secrets.GITEE_PASSWORD }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
         run: |
           echo "🔧 配置 Git 用户信息..."
           git config --global user.name "gytwo"
           git config --global user.email "15279172411@163.com"
           
           echo "📥 下载 Gitee 仓库的完整代码（包含历史）..."
-          GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_USERNAME:$GITEE_PASSWORD@|")
+          GITEE_AUTH_URL=$(echo "$GITEE_REPO_URL" | sed "s|https://|https://$GITEE_TOKEN@|")
           git clone -b "$GITEE_BRANCH" "$GITEE_AUTH_URL" gitee_temp
           
           if [ $? -ne 0 ]; then
