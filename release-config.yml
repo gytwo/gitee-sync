@@ -48,18 +48,18 @@ repositories:
         version_source: "_meta.lua"
         changelog_source: "changelog.lua"
 
-- name: "book.koplugin"
-  path: "gytwo/book.koplugin"
-  release:
-    beta:
-      enabled: true
-      branch: "sync"
-      prerelease: true
-      version_source: "bookversion.lua"
-      changelog_source: "changelog.lua"
-    stable:
-      enabled: true
-      branch: "main"
-      prerelease: false
-      version_source: "bookversion.lua"
-      changelog_source: "changelog.lua"
+  - name: "book.koplugin"
+    path: "gytwo/book.koplugin"
+    release:
+      beta:
+        enabled: true
+        branch: "sync"
+        prerelease: true
+        version_source: "bookversion.lua"
+        changelog_source: "changelog.lua"
+      stable:
+        enabled: true
+        branch: "main"
+        prerelease: false
+        version_source: "bookversion.lua"
+        changelog_source: "changelog.lua"
