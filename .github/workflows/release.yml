@@ -240,32 +240,31 @@ jobs:
           cd repo
           VERSION="${{ steps.meta.outputs.version }}"
           CL_FILE="${{ steps.config.outputs.changelog_source }}"
-          python3 - "$VERSION" "$CL_FILE" <<'PYEOF' > ../release_notes.md
-import re, sys
-version = sys.argv[1]
-cl_path = sys.argv[2]
-try:
-    with open(cl_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    pattern = re.compile(r'\["' + re.escape(version) + r'"\]\s*=\s*({[^}]+})', re.DOTALL)
-    m = pattern.search(content)
-    if m:
-        block = m.group(1)
-        items = re.findall(r'"([^"]+)"', block)
-        print("## What's Changed\n")
-        for item in items:
-            print(f"- {item}")
-    else:
-        print("## What's Changed\n\n_No changelog entries for this version._")
-except FileNotFoundError:
-    print(f"## What's Changed\n\n_`{cl_path}` file not found_")
-PYEOF
+          python3 - "$VERSION" "$CL_FILE" <<-'PYEOF' > ../release_notes.md
+          import re, sys
+          version = sys.argv[1]
+          cl_path = sys.argv[2]
+          try:
+              with open(cl_path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              pattern = re.compile(r'\["' + re.escape(version) + r'"\]\s*=\s*({[^}]+})', re.DOTALL)
+              m = pattern.search(content)
+              if m:
+                  block = m.group(1)
+                  items = re.findall(r'"([^"]+)"', block)
+                  print("## What's Changed\n")
+                  for item in items:
+                      print(f"- {item}")
+              else:
+                  print("## What's Changed\n\n_No changelog entries for this version._")
+          except FileNotFoundError:
+              print(f"## What's Changed\n\n_`{cl_path}` file not found_")
+          PYEOF
       - name: Create Release
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          cd repo
           if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
             TAG="${{ steps.tag.outputs.tag }}"
             PRERELEASE_FLAG="--prerelease"
@@ -278,6 +277,10 @@ PYEOF
             echo "⚠️ Release $TAG 已存在，跳过创建"
           else
             echo "🚀 创建新的 Release: $TAG"
-            gh release create "$TAG" dist/${{ steps.config.outputs.name }}.zip --repo "${{ steps.config.outputs.repo_path }}" --title "$TAG" --notes-file ../release_notes.md $PRERELEASE_FLAG
+            gh release create "$TAG" repo/dist/${{ steps.config.outputs.name }}.zip \
+              --repo "${{ steps.config.outputs.repo_path }}" \
+              --title "$TAG" \
+              --notes-file ../release_notes.md \
+              $PRERELEASE_FLAG
             echo "🎉 Release $TAG 创建成功"
           fi
