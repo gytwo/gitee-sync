@@ -230,7 +230,7 @@ jobs:
           cd repo
           VERSION="${{ steps.meta.outputs.version }}"
           CL_FILE="${{ steps.config.outputs.changelog_source }}"
-          python3 - "$VERSION" "$CL_FILE" <<'PYEOF'
+          python3 - "$VERSION" "$CL_FILE" <<'PYEOF' > ../release_notes.md
           import re, sys
           version = sys.argv[1]
           cl_path = sys.argv[2]
