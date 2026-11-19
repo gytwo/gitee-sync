@@ -127,7 +127,7 @@ jobs:
         if: steps.config.outputs.skip != 'true'
         id: check
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
         run: |
           REPO_PATH="${{ steps.config.outputs.repo_path }}"
           BRANCH="${{ steps.config.outputs.branch }}"
@@ -173,6 +173,7 @@ jobs:
           ref: ${{ steps.config.outputs.branch }}
           path: repo
           fetch-depth: 0
+          token: ${{ secrets.PRIVATE_REPO_TOKEN }}
 
       - name: Read version from version_source
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
