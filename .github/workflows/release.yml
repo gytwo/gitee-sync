@@ -181,7 +181,7 @@ jobs:
         run: |
           cd repo
           SRC_FILE="${{ steps.config.outputs.version_source }}"
-          VERSION=$(grep -oP '(local\s+)?(VERSION|version)\s*=\s*["\']\K[^"\']+' "$SRC_FILE" | head -n1)
+          VERSION=$(grep -oP '(local\s+)?(VERSION|version)\s*=\s*[\x22\x27]\K[^\x22\x27]+' "$SRC_FILE" | head -n1)
           if [[ -z "$VERSION" ]]; then
             echo "Error: could not extract version from $SRC_FILE" >&2
             echo "==== DEBUG 文件内容 ===="
