@@ -181,9 +181,11 @@ jobs:
         run: |
           cd repo
           SRC_FILE="${{ steps.config.outputs.version_source }}"
-          VERSION=$(grep -oP '(?<=version = ")[^"]+' "$SRC_FILE" | sed 's/^v//')
+          VERSION=$(grep -oP '(local\s+)?(VERSION|version)\s*=\s*["\']\K[^"\']+' "$SRC_FILE" | head -n1)
           if [[ -z "$VERSION" ]]; then
             echo "Error: could not extract version from $SRC_FILE" >&2
+            echo "==== DEBUG 文件内容 ===="
+            cat "$SRC_FILE"
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
