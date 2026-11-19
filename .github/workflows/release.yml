@@ -214,6 +214,8 @@ jobs:
         run: |
           cd repo
           mkdir -p dist
+          # 直接先把action拉出来的.git删掉，从根源干掉
+          rm -rf .git
           zip -r dist/${{ steps.config.outputs.name }}.zip . \
           -x ".git" \
           -x ".github/" \
