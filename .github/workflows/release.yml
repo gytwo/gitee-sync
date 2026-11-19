@@ -230,26 +230,25 @@ jobs:
           cd repo
           VERSION="${{ steps.meta.outputs.version }}"
           CL_FILE="${{ steps.config.outputs.changelog_source }}"
-          python3 - "$VERSION" "$CL_FILE" <<'PYEOF' > ../release_notes.md
+          python3 - "$VERSION" "$CL_FILE" <<'PYEOF'
           import re, sys
           version = sys.argv[1]
           cl_path = sys.argv[2]
           try:
-            with open(cl_path, "r", encoding="utf-8") as f:
-              content = f.read()
-            pattern = re.compile(r'["' + re.escape(version) + r'"]\s*=\s*{([^}]+)}', re.DOTALL)
-            m = re.search(pattern, content)
-            if m:
-              block = m.group(1)
-              items = re.findall(r'"([^"]+)"|\'([^\']+)\'', block)
-              items = [a if a else b for a,b in items]
-              print("## What's Changed\n")
-              for item in items:
-                print(f"- {item}")
-            else:
-              print("## What's Changed\n\n_No changelog entries for this version._")
+              with open(cl_path, "r", encoding="utf-8") as f:
+                  content = f.read()
+              pattern = re.compile(r'\["' + re.escape(version) + r'"\]\s*=\s*\{(.*?)\n\s*\},', re.DOTALL)
+              m = pattern.search(content)
+              if m:
+                  block = m.group(1)
+                  items = re.findall(r'"([^"]+)"\s*,?', block)
+                  print("## What's Changed\n")
+                  for item in items:
+                      print(f"- {item}")
+              else:
+                  print("## What's Changed\n\n_No changelog entries for this version._")
           except FileNotFoundError:
-            print(f"## What's Changed\n\n_`{cl_path}` file not found_")
+              print(f"## What's Changed\n\n_`{cl_path}` file not found_")
           PYEOF
 
       - name: Create Release
