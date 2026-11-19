@@ -225,6 +225,7 @@ jobs:
 
       - name: Build release notes
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
+        id: notes
         run: |
           cd repo
           VERSION="${{ steps.meta.outputs.version }}"
