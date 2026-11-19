@@ -227,13 +227,13 @@ jobs:
           cd repo
           mkdir -p dist
           zip -r dist/${{ steps.config.outputs.name }}.zip . \
-          -x "*/.git/*" \
-          -x ".github/*" \
-          -x "dist/*" \
-          -x "*.zip" \
-          -x "picture/*" \
-          -x "pictures/*" \
-          -x "node_modules/*"
+            -x "*/.git/*" \
+            -x ".github/*" \
+            -x "dist/*" \
+            -x "*.zip" \
+            -x "picture/*" \
+            -x "pictures/*" \
+            -x "node_modules/*"
       - name: Build release notes
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         run: |
@@ -278,11 +278,6 @@ PYEOF
             echo "⚠️ Release $TAG 已存在，跳过创建"
           else
             echo "🚀 创建新的 Release: $TAG"
-            gh release create "$TAG" \
-            dist/${{ steps.config.outputs.name }}.zip \
-            --repo "${{ steps.config.outputs.repo_path }}" \
-            --title "$TAG" \
-            --notes-file ../release_notes.md \
-            $PRERELEASE_FLAG
+            gh release create "$TAG" dist/${{ steps.config.outputs.name }}.zip --repo "${{ steps.config.outputs.repo_path }}" --title "$TAG" --notes-file ../release_notes.md $PRERELEASE_FLAG
             echo "🎉 Release $TAG 创建成功"
           fi
