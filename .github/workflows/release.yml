@@ -1,8 +1,6 @@
 name: Release
 
 on:
-  # schedule:
-  # - cron: '0 15 * * *'
   workflow_dispatch:
     inputs:
       release_type:
@@ -24,6 +22,7 @@ on:
           - cloudlibrary.koplugin
           - pinyin_enhancement.koplugin
           - quickui.koplugin
+          - book.koplugin
 
 permissions:
   contents: write
@@ -38,7 +37,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-
       - name: Generate dynamic matrix
         id: set-matrix
         run: |
@@ -57,25 +55,25 @@ jobs:
 
           for ((i=0; i<$REPO_COUNT; i++)); do
             NAME=$(yq e ".repositories[$i].name" "$CONFIG_FILE")
-            
+
             if [ -n "$REPO_FILTER" ] && [ "$NAME" != "$REPO_FILTER" ]; then
               echo "Skipping $NAME (filter: $REPO_FILTER)"
               continue
             fi
-            
+
             if [ -n "$RELEASE_TYPE_FILTER" ]; then
               RELEASE_TYPES=("$RELEASE_TYPE_FILTER")
             else
               RELEASE_TYPES=("beta" "stable")
             fi
-            
+
             for release_type in "${RELEASE_TYPES[@]}"; do
               ENABLED=$(yq e ".repositories[$i].release.$release_type.enabled // false" "$CONFIG_FILE")
               if [ "$ENABLED" = "true" ]; then
                 if [ -n "$MATRIX_ENTRIES" ]; then
                   MATRIX_ENTRIES="$MATRIX_ENTRIES,"
                 fi
-                MATRIX_ENTRIES="$MATRIX_ENTRIES{\"repository\":$i,\"release_type\":\"$release_type\",\"name\":\"$NAME\"}"
+                MATRIX_ENTRIES="$MATRIX_ENTRIES{"repository":$i,"release_type":"$release_type","name":"$NAME"}"
                 echo "添加: $NAME ($release_type)"
               else
                 echo "跳过: $NAME ($release_type) 未启用"
@@ -83,7 +81,7 @@ jobs:
             done
           done
 
-          echo "matrix={\"include\":[$MATRIX_ENTRIES]}" >> $GITHUB_OUTPUT
+          echo "matrix={"include":[$MATRIX_ENTRIES]}" >> $GITHUB_OUTPUT
 
   release:
     needs: prepare
@@ -100,7 +98,6 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
-
       - name: Load Configuration
         id: config
         run: |
@@ -117,8 +114,10 @@ jobs:
           NAME=$(yq e ".repositories[$REPO_INDEX].name" "$CONFIG_FILE")
           REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
           BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
-          ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled" "$CONFIG_FILE")
+          ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled // false" "$CONFIG_FILE")
           PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // false" "$CONFIG_FILE")
+          VERSION_SOURCE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.version_source" "$CONFIG_FILE")
+          CHANGELOG_SOURCE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.changelog_source" "$CONFIG_FILE")
 
           if [ "$ENABLED" != "true" ]; then
             echo "skip=true" >> $GITHUB_OUTPUT
@@ -130,36 +129,37 @@ jobs:
           echo "repo_path=$REPO_PATH" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
           echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
-
+          echo "version_source=$VERSION_SOURCE" >> $GITHUB_OUTPUT
+          echo "changelog_source=$CHANGELOG_SOURCE" >> $GITHUB_OUTPUT
       - name: Check for changes
         if: steps.config.outputs.skip != 'true'
         id: check
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           REPO_PATH="${{ steps.config.outputs.repo_path }}"
           BRANCH="${{ steps.config.outputs.branch }}"
           PRERELEASE="${{ steps.config.outputs.prerelease }}"
-          
+
           LAST_COMMIT_TIME_UTC=$(gh api repos/$REPO_PATH/commits/$BRANCH --jq '.commit.committer.date')
           LAST_COMMIT_TIME_BJ=$(date -d "$LAST_COMMIT_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
-          
+
           echo ""
           echo "=== Releases 信息 ==="
-          gh api repos/$REPO_PATH/releases --jq '.[] | {tag_name: .tag_name, created_at: .created_at, published_at: .published_at, prerelease: .prerelease}'
-          
+          gh api repos/$REPO_PATH/releases --jq '[] | {tag_name: .tag_name, created_at: .created_at, published_at: .published_at, prerelease: .prerelease}'
+
           if [ "$PRERELEASE" = "true" ]; then
             LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == true) | .published_at][0]' 2>/dev/null || echo "")
           else
             LAST_RELEASE_TIME_UTC=$(gh api repos/$REPO_PATH/releases --jq '[.[] | select(.prerelease == false) | .published_at][0]' 2>/dev/null || echo "")
           fi
-          
+
           if [ -n "$LAST_RELEASE_TIME_UTC" ]; then
             LAST_RELEASE_TIME_BJ=$(date -d "$LAST_RELEASE_TIME_UTC + 8 hours" +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "转换失败")
           else
             LAST_RELEASE_TIME_BJ="无"
           fi
-          
+
           echo ""
           echo "=== 比较结果 ==="
           echo "分支: $BRANCH"
@@ -167,18 +167,17 @@ jobs:
           echo "最后 commit 时间 (北京时间): $LAST_COMMIT_TIME_BJ"
           echo "最后 release published_at 时间 (UTC): $LAST_RELEASE_TIME_UTC"
           echo "最后 release published_at 时间 (北京时间): $LAST_RELEASE_TIME_BJ"
-          
+
           if [ -z "$LAST_RELEASE_TIME_UTC" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
             echo "没有找到任何 release，将发布"
-          elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" \> "$LAST_RELEASE_TIME_UTC" ]; then
+          elif [ -n "$LAST_COMMIT_TIME_UTC" ] && [ "$LAST_COMMIT_TIME_UTC" > "$LAST_RELEASE_TIME_UTC" ]; then
             echo "has_changes=true" >> $GITHUB_OUTPUT
-            echo "检测到新的 commit (commit 时间 > release 发布时间)，将发布"
+            echo "检测到新的 commit（commit 时间 > release 发布时间），将发布"
           else
             echo "has_changes=false" >> $GITHUB_OUTPUT
-            echo "没有新的 commit (commit 时间 ≤ release 发布时间)，跳过发布"
+            echo "没有新的 commit（commit 时间 ≤ release 发布时间），跳过发布"
           fi
-
       - name: Checkout repository
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         uses: actions/checkout@v6
@@ -187,25 +186,30 @@ jobs:
           ref: ${{ steps.config.outputs.branch }}
           path: repo
           fetch-depth: 0
-
-      - name: Read version from _meta.lua
+      - name: Read version from version_source
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         id: meta
         run: |
           cd repo
-          VERSION=$(grep -oP '(?<=version = ")[^"]+' _meta.lua | sed 's/^v//')
+          SRC_FILE="${{ steps.config.outputs.version_source }}"
+          echo "Try read version from: $SRC_FILE"
+
+          VERSION=$(grep -oP '(?<=version = ")[^"]+' "$SRC_FILE" 2>/dev/null | sed 's/^v//')
           if [[ -z "$VERSION" ]]; then
-            echo "Error: could not extract version from _meta.lua" >&2
+            VERSION=$(grep -oP '(?<=VERSION = ")[^"]+' "$SRC_FILE" 2>/dev/null | sed 's/^v//')
+          fi
+
+          if [[ -z "$VERSION" ]]; then
+            echo "Error: could not extract version from $SRC_FILE" >&2
             exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=v$VERSION" >> $GITHUB_OUTPUT
-
       - name: Resolve beta tag
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true' && steps.config.outputs.prerelease == 'true'
         id: tag
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           cd repo
           META_VERSION="${{ steps.meta.outputs.version }}"
@@ -217,52 +221,49 @@ jobs:
           done
           BETA_TAG="${BASE}-beta.${N}"
           echo "tag=$BETA_TAG" >> $GITHUB_OUTPUT
-          
-          sed -i "s/version = \"[^\"]*\"/version = \"${BETA_TAG}\"/" _meta.lua
-
       - name: Build plugin zip
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         run: |
           cd repo
           mkdir -p dist
           zip -r dist/${{ steps.config.outputs.name }}.zip . \
-            -x "*.git*" \
-            -x ".github/*" \
-            -x "dist/*" \
-            -x "*.zip" \
-            -x "picture/*" \
-            -x "pictures/*" \
-            -x "node_modules/*"
-
+          -x "*/.git/*" \
+          -x ".github/*" \
+          -x "dist/*" \
+          -x "*.zip" \
+          -x "picture/*" \
+          -x "pictures/*" \
+          -x "node_modules/*"
       - name: Build release notes
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         run: |
           cd repo
           VERSION="${{ steps.meta.outputs.version }}"
-          python3 - "$VERSION" <<'PYEOF' > ../release_notes.md
-          import re, sys
-          version = sys.argv[1]
-          try:
-              with open("changelog.lua") as f:
-                  content = f.read()
-              pattern = r'\["' + re.escape(version) + r'"\]\s*=\s*\{([^}]+)\}'
-              m = re.search(pattern, content, re.DOTALL)
-              if m:
-                  block = m.group(1)
-                  items = [a or b for a, b in re.findall(r'"([^"]+)"|\'([^\']+)\'', block)]
-                  print("## What's Changed\n")
-                  for item in items:
-                      print(f"- {item}")
-              else:
-                  print("## What's Changed\n\n_No changelog entries for this version._")
-          except FileNotFoundError:
-              print("## What's Changed\n\n_`changelog.lua` file not found_")
-          PYEOF
-
+          CL_FILE="${{ steps.config.outputs.changelog_source }}"
+          python3 - "$VERSION" "$CL_FILE" <<'PYEOF' > ../release_notes.md
+import re, sys
+version = sys.argv[1]
+cl_path = sys.argv[2]
+try:
+    with open(cl_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    pattern = re.compile(r'\["' + re.escape(version) + r'"\]\s*=\s*({[^}]+})', re.DOTALL)
+    m = pattern.search(content)
+    if m:
+        block = m.group(1)
+        items = re.findall(r'"([^"]+)"', block)
+        print("## What's Changed\n")
+        for item in items:
+            print(f"- {item}")
+    else:
+        print("## What's Changed\n\n_No changelog entries for this version._")
+except FileNotFoundError:
+    print(f"## What's Changed\n\n_`{cl_path}` file not found_")
+PYEOF
       - name: Create Release
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
         env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           cd repo
           if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
@@ -272,16 +273,16 @@ jobs:
             TAG="${{ steps.meta.outputs.tag }}"
             PRERELEASE_FLAG=""
           fi
-          
+
           if gh release view "$TAG" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; then
             echo "⚠️ Release $TAG 已存在，跳过创建"
           else
             echo "🚀 创建新的 Release: $TAG"
             gh release create "$TAG" \
-              dist/${{ steps.config.outputs.name }}.zip \
-              --repo "${{ steps.config.outputs.repo_path }}" \
-              --title "$TAG" \
-              --notes-file ../release_notes.md \
-              $PRERELEASE_FLAG
+            dist/${{ steps.config.outputs.name }}.zip \
+            --repo "${{ steps.config.outputs.repo_path }}" \
+            --title "$TAG" \
+            --notes-file ../release_notes.md \
+            $PRERELEASE_FLAG
             echo "🎉 Release $TAG 创建成功"
           fi
