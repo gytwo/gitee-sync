@@ -214,8 +214,7 @@ jobs:
           mkdir -p dist
           # 直接先把action拉出来的.git删掉，从根源干掉
           rm -rf .git
-          zip -r dist/${{ steps.config.outputs.name }}.zip . 
-          \
+          zip -r dist/${{ steps.config.outputs.name }}.zip . \
           -x ".git" \
           -x ".github/" \
           -x "dist/" \
@@ -269,8 +268,7 @@ jobs:
             echo "⚠️ Release $TAG 已存在，跳过创建"
           else
             echo "🚀 创建新的 Release: $TAG"
-            gh release create "$TAG" 
-           \
+            gh release create "$TAG" \
             dist/${{ steps.config.outputs.name }}.zip \
             --repo "${{ steps.config.outputs.repo_path }}" \
             --title "$TAG" \
