@@ -106,8 +106,8 @@ jobs:
           REPO_PATH=$(yq e ".repositories[$REPO_INDEX].path" "$CONFIG_FILE")
           BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
           ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled // false" "$CONFIG_FILE")
-          PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // false")
-          PRERELEASE=$(echo "$PRERELEASE" | tr '[:upper:]' '[:lower:]')
+          PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // false" "$CONFIG_FILE" | tr '[:upper:]' '[:lower:]' | xargs)
+
           # === 新增两行读取文件路径 ===
           VERSION_SOURCE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.version_source" "$CONFIG_FILE")
           CHANGELOG_SOURCE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.changelog_source" "$CONFIG_FILE")
@@ -258,9 +258,9 @@ jobs:
           GH_TOKEN: ${{ secrets.PRIVATE_REPO_TOKEN }}
         run: |
           cd repo
-          if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
+          if [[ $(echo "${{ steps.config.outputs.prerelease }}" | tr '[:upper:]' '[:lower:]') == "true" ]]; then
             if [[ -z "${{ steps.tag.outputs.tag }}" ]]; then
-              echo "ERROR: prerelease 但 beta tag 未生成，终止" >&2
+              echo "ERROR: prerelease 模式，但 Resolve beta tag 步骤没有产出 tag！" >&2
               exit 1
             fi
             TAG="${{ steps.tag.outputs.tag }}"
@@ -269,6 +269,7 @@ jobs:
             TAG="${{ steps.meta.outputs.tag }}"
             PRERELEASE_FLAG=""
           fi
+
           if gh release view "$TAG" --repo "${{ steps.config.outputs.repo_path }}" > /dev/null 2>&1; then
             echo "⚠️ Release $TAG 已存在，跳过创建"
           else
