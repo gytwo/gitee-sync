@@ -215,13 +215,13 @@ jobs:
           # 直接先把action拉出来的.git删掉，从根源干掉
           rm -rf .git
           zip -r dist/${{ steps.config.outputs.name }}.zip . \
-          -x ".git" \
-          -x ".github/" \
-          -x "dist/" \
+          -x ".git/*" \
+          -x ".github/*" \
+          -x "dist/*" \
           -x "*.zip" \
-          -x "picture/" \
-          -x "pictures/" \
-          -x "node_modules/"
+          -x "picture/*" \
+          -x "pictures/*" \
+          -x "node_modules/*"
 
       - name: Build release notes
         if: steps.config.outputs.skip != 'true' && steps.check.outputs.has_changes == 'true'
