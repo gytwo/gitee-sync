@@ -107,6 +107,7 @@ jobs:
           BRANCH=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.branch" "$CONFIG_FILE")
           ENABLED=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.enabled // false" "$CONFIG_FILE")
           PRERELEASE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.prerelease // false")
+          PRERELEASE=$(echo "$PRERELEASE" | tr '[:upper:]' '[:lower:]')
           # === 新增两行读取文件路径 ===
           VERSION_SOURCE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.version_source" "$CONFIG_FILE")
           CHANGELOG_SOURCE=$(yq e ".repositories[$REPO_INDEX].release.$RELEASE_TYPE.changelog_source" "$CONFIG_FILE")
@@ -258,6 +259,10 @@ jobs:
         run: |
           cd repo
           if [ "${{ steps.config.outputs.prerelease }}" = "true" ]; then
+            if [[ -z "${{ steps.tag.outputs.tag }}" ]]; then
+              echo "ERROR: prerelease 但 beta tag 未生成，终止" >&2
+              exit 1
+            fi
             TAG="${{ steps.tag.outputs.tag }}"
             PRERELEASE_FLAG="--prerelease"
           else
